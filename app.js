@@ -57,6 +57,11 @@ const URL_STATE_PARAMS = {
   ZERO_ROWS: 'zeros'
 };
 const RGPH2024_OFFICIAL_NATIONAL_POPULATION = 36828330;
+const RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN = Object.freeze({
+  moroccans: 36680178,
+  foreigners: 148152,
+  households: 9275038
+});
 const RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL = Object.freeze({
   tangertetouanalhoceima: 4030222,
   loriental: 2294665,
@@ -78,6 +83,7 @@ const RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL = Object.freeze({
   dakhlaouededdahab: 219965,
   dakhlaouededahab: 219965
 });
+const RGPH2024_OFFICIAL_REGION_BREAKDOWN_BY_CANONICAL = Object.freeze({});
 const PIVOT_VIEW_TITLE = {
   ar: {
     [PIVOT_VIEW.HEALTH]: 'احصائيات العرض الصحي',
@@ -1314,7 +1320,12 @@ function getRegionFromProvinceName(provinceName) {
 }
 
 function normalizeProvinceCode(value) {
-  return (value || '').toString().trim();
+  const raw = (value || '').toString().trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) {
+    return String(Number(raw));
+  }
+  return raw;
 }
 
 function normalizeJoinKey(value) {
@@ -2392,6 +2403,26 @@ function updateLandingStats(stats = null) {
   const population = Number.isFinite(stats?.population)
     ? stats.population
     : populationDetails.totalPopulation;
+  const showPopulationBreakdown = stats?.showPopulationBreakdown !== false;
+  const notAvailableValue = '—';
+  const hasOfficialBreakdown = !!stats?.hasOfficialBreakdown;
+  const moroccans = Number(populationDetails?.moroccans);
+  const foreigners = Number(populationDetails?.foreigners);
+  const households = Number(populationDetails?.households);
+  const roundedPopulation = Math.round(Number(population) || 0);
+  const officialRegionPopulationValues = new Set(Object.values(RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL).map((value) => Math.round(Number(value) || 0)));
+  const matchesOfficialNationalPopulation = roundedPopulation === RGPH2024_OFFICIAL_NATIONAL_POPULATION;
+  const matchesOfficialRegionPopulation = officialRegionPopulationValues.has(roundedPopulation);
+  const mustHideBreakdownForOfficialPopulation = !hasOfficialBreakdown
+    && (matchesOfficialNationalPopulation || matchesOfficialRegionPopulation);
+  const breakdownSum = moroccans + foreigners;
+  const hasCoherentBreakdown = Number.isFinite(moroccans)
+    && Number.isFinite(foreigners)
+    && Number.isFinite(households)
+    && Math.abs((Number(population) || 0) - breakdownSum) <= 1;
+  const shouldDisplayBreakdown = showPopulationBreakdown
+    && hasCoherentBreakdown
+    && !mustHideBreakdownForOfficialPopulation;
 
   animateCounter(document.getElementById('landingInstitutions'), institutions);
   animateCounter(document.getElementById('landingNetworks'), networks);
@@ -2400,11 +2431,23 @@ function updateLandingStats(stats = null) {
   const landingPopulationEl = document.getElementById('landingPopulation');
   if (landingPopulationEl) landingPopulationEl.textContent = formatIntegerForUi(population);
   const landingMoroccansEl = document.getElementById('landingPopulationMoroccans');
-  if (landingMoroccansEl) landingMoroccansEl.textContent = formatIntegerForUi(populationDetails.moroccans);
+  if (landingMoroccansEl) {
+    landingMoroccansEl.textContent = shouldDisplayBreakdown
+      ? formatIntegerForUi(moroccans)
+      : notAvailableValue;
+  }
   const landingForeignersEl = document.getElementById('landingPopulationForeigners');
-  if (landingForeignersEl) landingForeignersEl.textContent = formatIntegerForUi(populationDetails.foreigners);
+  if (landingForeignersEl) {
+    landingForeignersEl.textContent = shouldDisplayBreakdown
+      ? formatIntegerForUi(foreigners)
+      : notAvailableValue;
+  }
   const landingHouseholdsEl = document.getElementById('landingPopulationHouseholds');
-  if (landingHouseholdsEl) landingHouseholdsEl.textContent = formatIntegerForUi(populationDetails.households);
+  if (landingHouseholdsEl) {
+    landingHouseholdsEl.textContent = shouldDisplayBreakdown
+      ? formatIntegerForUi(households)
+      : notAvailableValue;
+  }
 }
 
 function getFilteredInstitutions() {
@@ -2490,12 +2533,18 @@ function getFilteredPopulationBreakdown() {
 }
 
 function getOfficialRegionPopulation2024(regionName) {
+  const key = getOfficialRegionCanonicalKey(regionName);
+  if (!key) return null;
+  return RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[key] ?? null;
+}
+
+function getOfficialRegionCanonicalKey(regionName) {
   const normalizedRegion = normalizeRegionName(regionName);
   if (!normalizedRegion) return null;
 
   const directKey = toCanonicalKey(normalizedRegion);
   if (directKey && RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[directKey] !== undefined) {
-    return RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[directKey];
+    return directKey;
   }
 
   ensureFrenchCanonicalMaps();
@@ -2503,11 +2552,36 @@ function getOfficialRegionPopulation2024(regionName) {
   if (frenchFromArabic) {
     const frenchKey = toCanonicalKey(normalizeRegionName(frenchFromArabic));
     if (frenchKey && RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[frenchKey] !== undefined) {
-      return RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[frenchKey];
+      return frenchKey;
     }
   }
 
   return null;
+}
+
+function getOfficialPopulationBreakdown2024(regionName = '') {
+  const toBreakdown = (source) => {
+    const moroccans = Number(source?.moroccans);
+    const foreigners = Number(source?.foreigners);
+    const households = Number(source?.households);
+    if (!Number.isFinite(moroccans) || !Number.isFinite(foreigners) || !Number.isFinite(households)) {
+      return null;
+    }
+    return {
+      totalPopulation: Math.round(moroccans + foreigners),
+      moroccans: Math.round(moroccans),
+      foreigners: Math.round(foreigners),
+      households: Math.round(households)
+    };
+  };
+
+  if (!regionName) {
+    return toBreakdown(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN);
+  }
+
+  const regionKey = getOfficialRegionCanonicalKey(regionName);
+  if (!regionKey) return null;
+  return toBreakdown(RGPH2024_OFFICIAL_REGION_BREAKDOWN_BY_CANONICAL[regionKey]);
 }
 
 function getAvailableRegionNames() {
@@ -3303,6 +3377,10 @@ function updateHeaderStats() {
   const hasGeographicFilter = !!(currentRegionFilter || currentProvinceFilter || currentCommuneFilter);
   const hasRegionOnlyFilter = !!(currentRegionFilter && !currentProvinceFilter && !currentCommuneFilter);
   const officialRegionPopulation = hasRegionOnlyFilter ? getOfficialRegionPopulation2024(currentRegionFilter) : null;
+  const officialBreakdown = !hasGeographicFilter
+    ? getOfficialPopulationBreakdown2024('')
+    : (hasRegionOnlyFilter ? getOfficialPopulationBreakdown2024(currentRegionFilter) : null);
+  const usesOfficialPopulationSource = !hasGeographicFilter || officialRegionPopulation !== null;
   const population = !hasGeographicFilter
     ? RGPH2024_OFFICIAL_NATIONAL_POPULATION
     : (officialRegionPopulation ?? filteredPopulationDetails.totalPopulation);
@@ -3313,7 +3391,16 @@ function updateHeaderStats() {
   document.getElementById('totalProvinces').textContent = formatIntegerForUi(provinces);
   document.getElementById('totalPopulation').textContent = formatIntegerForUi(population);
 
-  updateLandingStats({ institutions, networks, regions, provinces, population, populationDetails: filteredPopulationDetails });
+  updateLandingStats({
+    institutions,
+    networks,
+    regions,
+    provinces,
+    population,
+    populationDetails: officialBreakdown || filteredPopulationDetails,
+    showPopulationBreakdown: !usesOfficialPopulationSource || !!officialBreakdown,
+    hasOfficialBreakdown: !!officialBreakdown
+  });
 }
 
 /* ============ LEGEND ============ */
