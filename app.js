@@ -41,6 +41,43 @@ const PIVOT_VIEW = {
   COMMUNE: 'commune'
 };
 const APP_LANGUAGE_STORAGE_KEY = 'app_language';
+const APP_THEME_STORAGE_KEY = 'app_theme';
+const APP_THEME = {
+  LIGHT: 'light',
+  DARK: 'dark'
+};
+const URL_STATE_PARAMS = {
+  LANG: 'lang',
+  THEME: 'theme',
+  REGION: 'region',
+  PROVINCE: 'province',
+  COMMUNE: 'commune',
+  PIVOT_VIEW: 'pivot',
+  PIVOT_OPEN: 'panel',
+  ZERO_ROWS: 'zeros'
+};
+const RGPH2024_OFFICIAL_NATIONAL_POPULATION = 36828330;
+const RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL = Object.freeze({
+  tangertetouanalhoceima: 4030222,
+  loriental: 2294665,
+  oriental: 2294665,
+  fesmeknes: 4467911,
+  rabatsalekenitra: 5132639,
+  benimellalkhenifra: 2525801,
+  casablancasettat: 7688967,
+  marrakechsafi: 4892393,
+  draatafilalet: 1655623,
+  dratafilalet: 1655623,
+  drtafilalet: 1655623,
+  dratafilalt: 1655623,
+  drtafilalt: 1655623,
+  soussmassa: 3020431,
+  guelmimouednoun: 448685,
+  laayounesakiaelhamra: 451028,
+  eddakhlaouededdahab: 219965,
+  dakhlaouededdahab: 219965,
+  dakhlaouededahab: 219965
+});
 const PIVOT_VIEW_TITLE = {
   ar: {
     [PIVOT_VIEW.HEALTH]: 'احصائيات العرض الصحي',
@@ -60,11 +97,18 @@ const UI_TRANSLATIONS = {
     totalInstitutionsLabel: 'المؤسسات:',
     totalNetworksLabel: 'الشبكات:',
     totalRegionsLabel: 'الجهات:',
+    totalProvincesLabel: 'الأقاليم:',
+    totalPopulationLabel: 'عدد السكان:',
     togglePivotBtnText: 'احصائيات العرض الصحي',
     togglePivotProvinceBtnText: 'احصائيات الاقاليم',
     togglePivotCommuneBtnText: 'احصائيات الجماعات',
     searchPlaceholder: 'ابحث عن مؤسسة، جماعة، إقليم...',
     languageToggleLabel: 'FR',
+    themeToDarkLabel: 'داكن',
+    themeToLightLabel: 'فاتح',
+    themeToDarkTitle: 'تفعيل الوضع الداكن',
+    themeToLightTitle: 'تفعيل الوضع الفاتح',
+    themeToggleAria: 'تبديل المظهر',
     helpTitle: 'المساعدة والاختصارات',
     routeTitle: 'حساب المسافة والوقت بين مؤسستين',
     captureTitle: 'حفظ صورة الخريطة PNG',
@@ -98,11 +142,18 @@ const UI_TRANSLATIONS = {
     totalInstitutionsLabel: 'Établissements :',
     totalNetworksLabel: 'Réseaux :',
     totalRegionsLabel: 'Régions :',
+    totalProvincesLabel: 'Provinces :',
+    totalPopulationLabel: 'Population :',
     togglePivotBtnText: 'Statistiques de l’offre de soins',
     togglePivotProvinceBtnText: 'Statistiques des provinces/préfectures',
     togglePivotCommuneBtnText: 'Statistiques des communes',
     searchPlaceholder: 'Rechercher un établissement, une commune, une province…',
     languageToggleLabel: 'AR',
+    themeToDarkLabel: 'Sombre',
+    themeToLightLabel: 'Clair',
+    themeToDarkTitle: 'Activer le mode sombre',
+    themeToLightTitle: 'Activer le mode clair',
+    themeToggleAria: 'Basculer le thème',
     helpTitle: 'Aide et raccourcis',
     routeTitle: 'Calculer distance et durée entre deux établissements',
     captureTitle: 'Exporter la carte en PNG',
@@ -317,6 +368,9 @@ const REGION_NORMALIZATION_BY_CANONICAL = {
 
 const PROVINCE_NORMALIZATION_BY_CANONICAL = {
   anchock: 'Aïn Chock',
+  ainsebahaymohammadi: 'Ain Sebaa-Hay Mohammadi',
+  ainsebaahaymohammadi: 'Ain Sebaa-Hay Mohammadi',
+  ansebaahaymohammadi: 'Ain Sebaa-Hay Mohammadi',
   ansebahaymohammadi: 'Ain Sebaa-Hay Mohammadi',
   benmsick: 'Ben Msick',
   hayhassani: 'Hay Hassani',
@@ -329,7 +383,11 @@ const PROVINCE_NORMALIZATION_BY_CANONICAL = {
 let REGION_ARABIC_CANONICAL_MAP = null;
 let PROVINCE_ARABIC_CANONICAL_MAP = null;
 let COMMUNE_ARABIC_CANONICAL_MAP = null;
+let REGION_FRENCH_BY_ARABIC_CANONICAL = null;
+let PROVINCE_FRENCH_BY_ARABIC_CANONICAL = null;
+let COMMUNE_FRENCH_BY_ARABIC_CANONICAL = null;
 let currentLanguage = localStorage.getItem(APP_LANGUAGE_STORAGE_KEY) === 'fr' ? 'fr' : 'ar';
+let currentTheme = localStorage.getItem(APP_THEME_STORAGE_KEY) === APP_THEME.DARK ? APP_THEME.DARK : APP_THEME.LIGHT;
 
 /* ============ GLOBAL STATE ============ */
 let map = null;
@@ -339,6 +397,7 @@ let allInstitutions = [];
 let provinceToRegionMap = {};
 let provinceToRegionIndex = {};
 let provinceCodeToRegionMap = {};
+let provinceCodeToNameMap = {};
 let provinceNameToCodesIndex = {};
 let reseauColors = Object.assign({}, COLORS);
 let showZeroRows = false;
@@ -350,11 +409,13 @@ let provincesLayer = null;
 let communesLayer = null;
 let markersClusterGroup = null;
 let markersRawGroup = null;
+let baseMapTileLayer = null;
 let mapPrinter = null;
 let reseauVisibility = null;
 let currentRegionFilter = '';
 let currentProvinceFilter = '';
 let currentCommuneFilter = '';
+let suppressUrlStateSync = false;
 let routeModeActive = false;
 let routeSelectedMarkers = [];
 let routeLineLayer = null;
@@ -435,6 +496,213 @@ function langText(arText, frText) {
   return fixCommonMojibake(isFrenchLanguage() ? frText : arText);
 }
 
+function getPolygonStrokeStyle(level, matches) {
+  const targetLevel = level === 'province' ? 'province' : 'commune';
+  const isMatch = !!matches;
+
+  if (isDarkTheme()) {
+    if (targetLevel === 'province') {
+      return {
+        color: isMatch ? '#93c5fd' : '#475569',
+        weight: isMatch ? 2.6 : 1.1
+      };
+    }
+    return {
+      color: isMatch ? '#60a5fa' : '#334155',
+      weight: isMatch ? 1.15 : 0.7
+    };
+  }
+
+  if (targetLevel === 'province') {
+    return {
+      color: isMatch ? '#333' : '#bbb',
+      weight: isMatch ? 2.5 : 1
+    };
+  }
+
+  return {
+    color: isMatch ? '#666' : '#cfcfcf',
+    weight: isMatch ? 1 : 0.6
+  };
+}
+
+function refreshPolygonThemeStyles() {
+  if (!map) return;
+  if (provincesLayer) updateProvinceLayerByFilters(false);
+  if (communesLayer) updateCommuneLayerByFilters();
+}
+
+function parseBooleanUrlParam(value) {
+  if (!value) return false;
+  const normalized = String(value).trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes';
+}
+
+function readAppStateFromUrl() {
+  const params = new URLSearchParams(window.location.search || '');
+  const languageParam = params.get(URL_STATE_PARAMS.LANG);
+  const themeParam = params.get(URL_STATE_PARAMS.THEME);
+  const regionParam = params.get(URL_STATE_PARAMS.REGION);
+  const provinceParam = params.get(URL_STATE_PARAMS.PROVINCE);
+  const communeParam = params.get(URL_STATE_PARAMS.COMMUNE);
+  const pivotParam = params.get(URL_STATE_PARAMS.PIVOT_VIEW);
+
+  return {
+    language: languageParam === 'fr' || languageParam === 'ar' ? languageParam : '',
+    theme: themeParam === APP_THEME.DARK || themeParam === APP_THEME.LIGHT ? themeParam : '',
+    region: normalizeRegionName(regionParam),
+    province: normalizeProvinceName(provinceParam),
+    commune: normalizeTextValue(communeParam),
+    pivotView: normalizePivotView(pivotParam),
+    pivotOpen: parseBooleanUrlParam(params.get(URL_STATE_PARAMS.PIVOT_OPEN)),
+    showZeroRows: parseBooleanUrlParam(params.get(URL_STATE_PARAMS.ZERO_ROWS))
+  };
+}
+
+function applyInitialPreferencesFromUrl(state) {
+  if (!state || typeof state !== 'object') return;
+
+  if (state.language === 'fr' || state.language === 'ar') {
+    currentLanguage = state.language;
+    localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, currentLanguage);
+  }
+
+  if (state.theme === APP_THEME.DARK || state.theme === APP_THEME.LIGHT) {
+    currentTheme = state.theme;
+    localStorage.setItem(APP_THEME_STORAGE_KEY, currentTheme);
+  }
+}
+
+function syncAppStateToUrl() {
+  if (suppressUrlStateSync) return;
+
+  const params = new URLSearchParams(window.location.search || '');
+  const container = document.getElementById('app-container');
+  const isPivotOpen = !!container?.classList.contains('with-pivot');
+
+  const setOrDelete = (key, value) => {
+    if (value === null || value === undefined || value === '' || value === false) {
+      params.delete(key);
+      return;
+    }
+    params.set(key, String(value));
+  };
+
+  setOrDelete(URL_STATE_PARAMS.LANG, currentLanguage === 'fr' ? 'fr' : '');
+  setOrDelete(URL_STATE_PARAMS.THEME, currentTheme === APP_THEME.DARK ? APP_THEME.DARK : '');
+  setOrDelete(URL_STATE_PARAMS.REGION, currentRegionFilter || '');
+  setOrDelete(URL_STATE_PARAMS.PROVINCE, currentProvinceFilter || '');
+  setOrDelete(URL_STATE_PARAMS.COMMUNE, currentCommuneFilter || '');
+  setOrDelete(URL_STATE_PARAMS.PIVOT_VIEW, currentPivotView !== PIVOT_VIEW.HEALTH ? currentPivotView : '');
+  setOrDelete(URL_STATE_PARAMS.PIVOT_OPEN, isPivotOpen ? '1' : '');
+  setOrDelete(URL_STATE_PARAMS.ZERO_ROWS, showZeroRows ? '1' : '');
+
+  const nextQuery = params.toString();
+  const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash || ''}`;
+  window.history.replaceState(null, '', nextUrl);
+}
+
+function applyRuntimeStateFromUrl(state) {
+  if (!state || typeof state !== 'object') return;
+
+  showZeroRows = !!state.showZeroRows;
+
+  const hasGeoFilters = !!(state.region || state.province || state.commune);
+  if (hasGeoFilters) {
+    applyGeographicFilters({
+      region: state.region || '',
+      province: state.province || '',
+      commune: state.commune || '',
+      fitBounds: false
+    });
+  } else {
+    applyGeographicFilters({ fitBounds: false });
+  }
+
+  currentPivotView = normalizePivotView(state.pivotView);
+  updatePivotPanelTitle();
+  setPivotViewButtonsState();
+
+  if (state.pivotOpen) {
+    togglePivotPanelByView(currentPivotView);
+  } else {
+    closePivotPanel();
+  }
+
+  if (lastPivotData) {
+    renderCurrentPivotView(getSelectedPivotCategoriesFromUi(lastPivotData.categories || []));
+  }
+}
+
+function isDarkTheme() {
+  return currentTheme === APP_THEME.DARK;
+}
+
+function getThemeToggleLabel() {
+  return isDarkTheme() ? t('themeToLightLabel') : t('themeToDarkLabel');
+}
+
+function getThemeToggleTitle() {
+  return isDarkTheme() ? t('themeToLightTitle') : t('themeToDarkTitle');
+}
+
+function updateThemeColorMeta() {
+  const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  if (!themeColorMeta) return;
+  themeColorMeta.setAttribute('content', isDarkTheme() ? '#0f172a' : '#1f77b4');
+}
+
+function updateThemeToggleUi() {
+  const themeToggleBtn = document.getElementById('themeToggleBtn');
+  const themeToggleLabel = document.getElementById('themeToggleLabel');
+  const themeToggleIcon = document.getElementById('themeToggleIcon');
+  const title = getThemeToggleTitle();
+
+  if (themeToggleLabel) {
+    themeToggleLabel.textContent = getThemeToggleLabel();
+  }
+
+  if (themeToggleBtn) {
+    themeToggleBtn.title = title;
+    themeToggleBtn.setAttribute('aria-label', t('themeToggleAria'));
+    themeToggleBtn.classList.toggle('active', isDarkTheme());
+  }
+
+  if (themeToggleIcon) {
+    themeToggleIcon.classList.toggle('fa-moon', !isDarkTheme());
+    themeToggleIcon.classList.toggle('fa-sun', isDarkTheme());
+  }
+
+  updateThemeColorMeta();
+}
+
+function applyAppTheme(theme, persist = true) {
+  currentTheme = theme === APP_THEME.DARK ? APP_THEME.DARK : APP_THEME.LIGHT;
+
+  if (document.body) {
+    document.body.setAttribute('data-theme', currentTheme);
+  }
+
+  if (persist) {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, currentTheme);
+  }
+
+  updateThemeToggleUi();
+  applyBaseMapTheme();
+  refreshPolygonThemeStyles();
+  syncAppStateToUrl();
+}
+
+function toggleAppTheme() {
+  applyAppTheme(isDarkTheme() ? APP_THEME.LIGHT : APP_THEME.DARK);
+}
+
+function initializeTheme() {
+  const savedTheme = localStorage.getItem(APP_THEME_STORAGE_KEY);
+  const initialTheme = savedTheme === APP_THEME.DARK ? APP_THEME.DARK : APP_THEME.LIGHT;
+  applyAppTheme(initialTheme, false);
+}
+
 function getPivotViewTitle(view) {
   const byLang = PIVOT_VIEW_TITLE[currentLanguage] || PIVOT_VIEW_TITLE.ar;
   return byLang[view] || byLang[PIVOT_VIEW.HEALTH];
@@ -456,10 +724,13 @@ function applyLanguageToStaticUi() {
   setElementText('totalInstitutionsLabel', t('totalInstitutionsLabel'));
   setElementText('totalNetworksLabel', t('totalNetworksLabel'));
   setElementText('totalRegionsLabel', t('totalRegionsLabel'));
+  setElementText('totalProvincesLabel', t('totalProvincesLabel'));
+  setElementText('totalPopulationLabel', t('totalPopulationLabel'));
   setElementText('togglePivotBtnText', t('togglePivotBtnText'));
   setElementText('togglePivotProvinceBtnText', t('togglePivotProvinceBtnText'));
   setElementText('togglePivotCommuneBtnText', t('togglePivotCommuneBtnText'));
   setElementText('languageToggleLabel', t('languageToggleLabel'));
+  updateThemeToggleUi();
 
   const searchInput = document.getElementById('searchInput');
   if (searchInput) searchInput.placeholder = t('searchPlaceholder');
@@ -489,6 +760,11 @@ function applyLanguageToStaticUi() {
   if (landingStatLabels[0]) landingStatLabels[0].textContent = langText('إجمالي المؤسسات', 'Total établissements');
   if (landingStatLabels[1]) landingStatLabels[1].textContent = langText('الشبكات المتاحة', 'Réseaux disponibles');
   if (landingStatLabels[2]) landingStatLabels[2].textContent = langText('الجهات المغطاة', 'Régions couvertes');
+  if (landingStatLabels[3]) landingStatLabels[3].textContent = langText('الأقاليم المغطاة', 'Provinces couvertes');
+  if (landingStatLabels[4]) landingStatLabels[4].textContent = langText('الساكنة', 'Population');
+  setElementText('landingPopulationMoroccansLabel', langText('المغاربة', 'Marocains'));
+  setElementText('landingPopulationForeignersLabel', langText('الأجانب', 'Étrangers'));
+  setElementText('landingPopulationHouseholdsLabel', langText('الأسر', 'Ménages'));
 
   const landingCards = document.querySelectorAll('#mainLanding .landing-card');
   if (landingCards[0]) {
@@ -582,6 +858,7 @@ function applyLanguageToStaticUi() {
         <li>Cliquez sur les points de la carte pour afficher les détails</li>
         <li>Utilisez le tableau analytique pour comparer et exporter</li>
         <li>Les statistiques donnent une vue d’ensemble des données</li>
+        <li>Source démographique affichée : Recensement RGPH 2024</li>
       </ul>
     `
       : `
@@ -601,6 +878,7 @@ function applyLanguageToStaticUi() {
         <li>اضغط على النقاط على الخريطة لعرض التفاصيل</li>
         <li>استخدم الجدول التحليلي للمقارنات والتصدير</li>
         <li>الإحصائيات توفر نظرة عامة على البيانات</li>
+        <li>المصدر الديموغرافي المعروض: التعداد العام للسكان والسكنى RGPH 2024</li>
       </ul>
     `;
   }
@@ -609,6 +887,7 @@ function applyLanguageToStaticUi() {
 function toggleAppLanguage() {
   currentLanguage = isFrenchLanguage() ? 'ar' : 'fr';
   localStorage.setItem(APP_LANGUAGE_STORAGE_KEY, currentLanguage);
+  syncAppStateToUrl();
   window.location.reload();
 }
 
@@ -717,22 +996,59 @@ function showToast(message, type = 'info') {
   setTimeout(() => toast.remove(), CONFIG.TOAST_DURATION);
 }
 
+function formatIntegerForUi(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '0';
+  const locale = isFrenchLanguage() ? 'fr-MA' : 'ar-MA';
+  return new Intl.NumberFormat(locale, { maximumFractionDigits: 0 }).format(Math.round(numericValue));
+}
+
 function normalizeRegionName(name) {
   const normalized = normalizeTextValue(name);
   if (!normalized) return '';
-  const canonical = toCanonicalKey(normalized);
+  const sanitized = normalized.replace(/\uFFFD/g, '').trim();
+  if (!sanitized) return '';
+
+  const compactArabic = sanitized.replace(/[\s\-_]+/g, '');
+  if (compactArabic.includes('درعة') && compactArabic.includes('تافيلالت')) {
+    return 'Drâa-Tafilalet';
+  }
+
+  const compact = sanitized
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[\s\-_]+/g, '');
+  if (/^dr[?�]?a{0,2}tafilalet$/.test(compact) || /^dr[?�]?atafilalet$/.test(compact)) {
+    return 'Drâa-Tafilalet';
+  }
+
+  const canonical = toCanonicalKey(sanitized);
   if (REGION_NORMALIZATION_BY_CANONICAL[canonical]) {
     return REGION_NORMALIZATION_BY_CANONICAL[canonical];
   }
   if (canonical.includes('tafilal') && canonical.startsWith('dr')) {
     return 'Drâa-Tafilalet';
   }
-  return normalized;
+  return sanitized;
 }
 
 function normalizeProvinceName(name) {
   const normalized = normalizeTextValue(name);
   if (!normalized) return '';
+
+  const compactArabic = normalized.replace(/[\s\-_]+/g, '');
+  if (compactArabic.includes('عين') && compactArabic.includes('السبع') && compactArabic.includes('المحمد')) {
+    return 'Ain Sebaa-Hay Mohammadi';
+  }
+
+  const compactLatin = normalized
+    .toLowerCase()
+    .replace(/[’']/g, '')
+    .replace(/[\s\-_]+/g, '');
+  if (compactLatin.includes('seba') && compactLatin.includes('hay') && compactLatin.includes('mohammadi')) {
+    return 'Ain Sebaa-Hay Mohammadi';
+  }
+
   const canonical = toCanonicalKey(normalized);
   return PROVINCE_NORMALIZATION_BY_CANONICAL[canonical] || normalized;
 }
@@ -756,6 +1072,7 @@ function fixCommonMojibake(value) {
     'Ã¼': 'ü',
     'Ã®': 'î',
     'Ã¯': 'ï',
+    'ï¿½': '�',
     'â€™': '’',
     'â€“': '–',
     'â€”': '—'
@@ -780,8 +1097,34 @@ function fixCommonMojibake(value) {
   }
 }
 
+function normalizeCaretAccents(value) {
+  const text = (value === null || value === undefined) ? '' : String(value);
+  if (!text || !text.includes('^')) return text;
+
+  const accentMap = {
+    a: 'â', A: 'Â',
+    e: 'ê', E: 'Ê',
+    i: 'î', I: 'Î',
+    o: 'ô', O: 'Ô',
+    u: 'û', U: 'Û'
+  };
+
+  return text
+    .replace(/\^([aeiouAEIOU])/g, (_, letter) => accentMap[letter] || letter)
+    .replace(/([aeiouAEIOU])\^/g, (_, letter) => accentMap[letter] || letter);
+}
+
+function fixReplacementCharWords(value) {
+  const text = (value === null || value === undefined) ? '' : String(value);
+  if (!text) return text;
+
+  return text
+    .replace(/A(?:�|\?|ï¿½|\^)?n\s*[-–—]?\s*Seba(?:�|\?|ï¿½|\^|a|â)?\s*\(Arrond\.\)/gi, 'Aïn-Sebaâ (Arrond.)')
+    .replace(/Dr(?:�|\?|ï¿½|\^)?a\s*[-–—]?\s*Tafilalet/gi, 'Drâa-Tafilalet');
+}
+
 function normalizeTextValue(value) {
-  return fixCommonMojibake(value).trim();
+  return normalizeCaretAccents(fixReplacementCharWords(fixCommonMojibake(value))).trim();
 }
 
 function toCanonicalKey(value) {
@@ -799,6 +1142,17 @@ function buildArabicCanonicalMap(sourceMap = {}) {
     const canonical = toCanonicalKey(source);
     if (canonical && !out.has(canonical)) {
       out.set(canonical, translated);
+    }
+  });
+  return out;
+}
+
+function buildFrenchByArabicCanonicalMap(sourceMap = {}) {
+  const out = new Map();
+  Object.entries(sourceMap).forEach(([frenchName, arabicName]) => {
+    const canonicalArabic = toCanonicalKey(arabicName);
+    if (canonicalArabic && !out.has(canonicalArabic)) {
+      out.set(canonicalArabic, normalizeTextValue(frenchName));
     }
   });
   return out;
@@ -827,6 +1181,81 @@ function ensureArabicCanonicalMaps() {
   }
 }
 
+function ensureFrenchCanonicalMaps() {
+  if (!REGION_FRENCH_BY_ARABIC_CANONICAL) {
+    REGION_FRENCH_BY_ARABIC_CANONICAL = buildFrenchByArabicCanonicalMap(REGION_ARABIC_MAP);
+  }
+  if (!PROVINCE_FRENCH_BY_ARABIC_CANONICAL) {
+    PROVINCE_FRENCH_BY_ARABIC_CANONICAL = buildFrenchByArabicCanonicalMap(PROVINCE_ARABIC_MAP);
+  }
+  if (!COMMUNE_FRENCH_BY_ARABIC_CANONICAL) {
+    COMMUNE_FRENCH_BY_ARABIC_CANONICAL = buildFrenchByArabicCanonicalMap(COMMUNE_ARABIC_MAP);
+  }
+}
+
+function normalizeUnknownDisplayValue(value) {
+  const normalized = normalizeTextValue(value);
+  if (!normalized) return t('unknown');
+  const canonical = toCanonicalKey(normalized);
+  if (canonical === 'nondefini' || canonical === 'nondefinie' || canonical === toCanonicalKey('غير محدد')) {
+    return t('unknown');
+  }
+  return normalized;
+}
+
+function toFrenchNameFromArabic(value, frenchByArabicCanonicalMap) {
+  const normalized = normalizeUnknownDisplayValue(value);
+  if (!normalized) return t('unknown');
+
+  const canonical = toCanonicalKey(normalized);
+  if (frenchByArabicCanonicalMap instanceof Map && canonical && frenchByArabicCanonicalMap.has(canonical)) {
+    return frenchByArabicCanonicalMap.get(canonical) || normalized;
+  }
+  return normalized;
+}
+
+function getLocalizedRegionDisplayName(regionName) {
+  if (isFrenchLanguage()) {
+    ensureFrenchCanonicalMaps();
+    return toFrenchNameFromArabic(normalizeRegionName(regionName), REGION_FRENCH_BY_ARABIC_CANONICAL);
+  }
+  return toArabicRegionName(regionName);
+}
+
+function getLocalizedProvinceDisplayName(provinceName) {
+  if (isFrenchLanguage()) {
+    ensureFrenchCanonicalMaps();
+    return toFrenchNameFromArabic(normalizeProvinceName(provinceName), PROVINCE_FRENCH_BY_ARABIC_CANONICAL);
+  }
+  return toArabicProvinceName(provinceName);
+}
+
+function getLocalizedCommuneDisplayName(communeName, props = null) {
+  if (isFrenchLanguage()) {
+    ensureFrenchCanonicalMaps();
+    return toFrenchNameFromArabic(normalizeTextValue(communeName), COMMUNE_FRENCH_BY_ARABIC_CANONICAL);
+  }
+  return toArabicCommuneName(communeName, props);
+}
+
+function compareAlphabeticalLabels(a, b) {
+  const left = normalizeTextValue(a);
+  const right = normalizeTextValue(b);
+  return left.localeCompare(right, 'fr', { sensitivity: 'base', numeric: true });
+}
+
+function compareLocalizedRegionValues(a, b) {
+  return compareAlphabeticalLabels(getLocalizedRegionDisplayName(a), getLocalizedRegionDisplayName(b));
+}
+
+function compareLocalizedProvinceValues(a, b) {
+  return compareAlphabeticalLabels(getLocalizedProvinceDisplayName(a), getLocalizedProvinceDisplayName(b));
+}
+
+function compareLocalizedCommuneValues(a, b) {
+  return compareAlphabeticalLabels(getLocalizedCommuneDisplayName(a), getLocalizedCommuneDisplayName(b));
+}
+
 function getInstitutionRegion(item) {
   return normalizeRegionName(getResValue(item, ['region', 'Region', 'REGION']));
 }
@@ -852,12 +1281,36 @@ function setProvinceRegionMapping(provinceName, regionName) {
   if (key && !provinceToRegionIndex[key]) {
     provinceToRegionIndex[key] = region;
   }
+
+  Object.entries(PROVINCE_ARABIC_MAP).forEach(([sourceName, arabicName]) => {
+    if (toCanonicalKey(sourceName) !== key) return;
+    const normalizedArabic = normalizeProvinceName(arabicName);
+    if (!normalizedArabic) return;
+
+    if (!provinceToRegionMap[normalizedArabic]) {
+      provinceToRegionMap[normalizedArabic] = region;
+    }
+
+    const arabicKey = toCanonicalKey(normalizedArabic);
+    if (arabicKey && !provinceToRegionIndex[arabicKey]) {
+      provinceToRegionIndex[arabicKey] = region;
+    }
+  });
 }
 
 function getRegionFromProvinceName(provinceName) {
   const province = normalizeProvinceName(provinceName);
   if (!province) return '';
-  return provinceToRegionMap[province] || provinceToRegionIndex[toCanonicalKey(province)] || '';
+
+  const direct = provinceToRegionMap[province] || provinceToRegionIndex[toCanonicalKey(province)] || '';
+  if (direct) return direct;
+
+  ensureFrenchCanonicalMaps();
+  const frenchFromArabic = PROVINCE_FRENCH_BY_ARABIC_CANONICAL?.get(toCanonicalKey(province)) || '';
+  if (!frenchFromArabic) return '';
+
+  const normalizedFrench = normalizeProvinceName(frenchFromArabic);
+  return provinceToRegionMap[normalizedFrench] || provinceToRegionIndex[toCanonicalKey(normalizedFrench)] || '';
 }
 
 function normalizeProvinceCode(value) {
@@ -869,7 +1322,9 @@ function normalizeJoinKey(value) {
 }
 
 function getProvinceCodeFromProps(props = {}) {
-  return normalizeProvinceCode(getResValue(props, ['code', 'CODE', 'province_code', 'PROV_CODE']));
+  return normalizeProvinceCode(
+    getResValue(props, ['CODE_1', 'code_1', 'code', 'CODE', 'province_code', 'PROV_CODE', 'ADM1_CODE'])
+  );
 }
 
 function getCommuneProvinceCode(props = {}) {
@@ -1747,6 +2202,7 @@ async function loadExcelSymbology(file) {
 
 function rebuildProvinceCodeIndexes() {
   provinceCodeToRegionMap = {};
+  provinceCodeToNameMap = {};
   provinceNameToCodesIndex = {};
 
   if (!provincesLayer) return;
@@ -1759,6 +2215,10 @@ function rebuildProvinceCodeIndexes() {
 
     if (provinceCode && regionName && !provinceCodeToRegionMap[provinceCode]) {
       provinceCodeToRegionMap[provinceCode] = regionName;
+    }
+
+    if (provinceCode && provinceName && !provinceCodeToNameMap[provinceCode]) {
+      provinceCodeToNameMap[provinceCode] = provinceName;
     }
 
     if (provinceName && provinceCode) {
@@ -1775,6 +2235,19 @@ function rebuildProvinceCodeIndexes() {
   });
 }
 
+function getProvinceNameFromCode(provinceCode = '') {
+  const normalizedCode = normalizeProvinceCode(provinceCode);
+  if (!normalizedCode) return '';
+  return normalizeProvinceName(provinceCodeToNameMap[normalizedCode] || '');
+}
+
+function getCommuneProvinceName(props = {}) {
+  const communeProvinceCode = getCommuneProvinceCode(props);
+  const provinceFromCode = getProvinceNameFromCode(communeProvinceCode);
+  if (provinceFromCode) return provinceFromCode;
+  return getLayerProvinceName(props);
+}
+
 function getProvinceCodesForFilter(provinceName) {
   const key = toCanonicalKey(provinceName);
   return new Set(provinceNameToCodesIndex[key] || []);
@@ -1783,21 +2256,34 @@ function getProvinceCodesForFilter(provinceName) {
 function getLayerProvinceName(props = {}) {
   const label = getResValue(props, ['label', 'LABEL', 'libelle', 'LIBELLE']) || '';
   const parsed = parseProvinceLabel(label);
-  return normalizeProvinceName(
-    getResValue(props, ['NAME_1', 'name', 'NAME', 'nom', 'NOM', 'province', 'PROVINCE', 'delegation', 'DELEGATION'])
+  const rawProvince = getResValue(props, ['NAME_1', 'name', 'NAME', 'nom', 'NOM', 'province', 'PROVINCE', 'delegation', 'DELEGATION'])
     || parsed.name
-    || ''
-  );
+    || '';
+  const normalizedProvince = normalizeProvinceName(rawProvince);
+  if (!normalizedProvince) return '';
+
+  ensureFrenchCanonicalMaps();
+  const frenchFromArabic = PROVINCE_FRENCH_BY_ARABIC_CANONICAL?.get(toCanonicalKey(normalizedProvince)) || '';
+  return normalizeProvinceName(frenchFromArabic || normalizedProvince);
 }
 
 function getLayerRegionName(props = {}, provinceName = '') {
   const regionRaw = normalizeRegionName(getResValue(props, ['REGION', 'region', 'NAME_0', 'REGION_NAME']) || '');
-  if (regionRaw) return regionRaw;
+  if (regionRaw) {
+    ensureFrenchCanonicalMaps();
+    const frenchFromArabic = REGION_FRENCH_BY_ARABIC_CANONICAL?.get(toCanonicalKey(regionRaw)) || '';
+    return normalizeRegionName(frenchFromArabic || regionRaw);
+  }
   return getRegionFromProvinceName(provinceName);
 }
 
 function getLayerCommuneName(props = {}) {
-  return normalizeTextValue(getResValue(props, ['NAME_2', 'name', 'NAME', 'nom', 'NOM', 'commune', 'COMMUNE']) || '');
+  const rawCommune = normalizeTextValue(getResValue(props, ['NAME_2', 'name', 'NAME', 'nom', 'NOM', 'commune', 'COMMUNE']) || '');
+  if (!rawCommune) return '';
+
+  ensureFrenchCanonicalMaps();
+  const frenchFromArabic = COMMUNE_FRENCH_BY_ARABIC_CANONICAL?.get(toCanonicalKey(rawCommune)) || '';
+  return normalizeTextValue(frenchFromArabic || rawCommune);
 }
 
 function getLayerCommuneIso(props = {}) {
@@ -1897,14 +2383,28 @@ function animateCounter(element, target) {
   requestAnimationFrame(tick);
 }
 
-function updateLandingStats() {
-  const institutions = allInstitutions.length;
-  const networks = new Set(allInstitutions.map(i => getResValue(i, ['reseau', 'abr_reseau']))).size;
-  const regions = new Set(allInstitutions.map(i => i.region)).size;
+function updateLandingStats(stats = null) {
+  const institutions = stats?.institutions ?? allInstitutions.length;
+  const networks = stats?.networks ?? new Set(allInstitutions.map(i => getResValue(i, ['reseau', 'abr_reseau']))).size;
+  const regions = stats?.regions ?? new Set(allInstitutions.map(i => i.region)).size;
+  const provinces = stats?.provinces ?? new Set(allInstitutions.map(getInstitutionProvince).filter(Boolean)).size;
+  const populationDetails = stats?.populationDetails || getFilteredPopulationBreakdown();
+  const population = Number.isFinite(stats?.population)
+    ? stats.population
+    : populationDetails.totalPopulation;
 
   animateCounter(document.getElementById('landingInstitutions'), institutions);
   animateCounter(document.getElementById('landingNetworks'), networks);
   animateCounter(document.getElementById('landingRegions'), regions);
+  animateCounter(document.getElementById('landingProvinces'), provinces);
+  const landingPopulationEl = document.getElementById('landingPopulation');
+  if (landingPopulationEl) landingPopulationEl.textContent = formatIntegerForUi(population);
+  const landingMoroccansEl = document.getElementById('landingPopulationMoroccans');
+  if (landingMoroccansEl) landingMoroccansEl.textContent = formatIntegerForUi(populationDetails.moroccans);
+  const landingForeignersEl = document.getElementById('landingPopulationForeigners');
+  if (landingForeignersEl) landingForeignersEl.textContent = formatIntegerForUi(populationDetails.foreigners);
+  const landingHouseholdsEl = document.getElementById('landingPopulationHouseholds');
+  if (landingHouseholdsEl) landingHouseholdsEl.textContent = formatIntegerForUi(populationDetails.households);
 }
 
 function getFilteredInstitutions() {
@@ -1915,6 +2415,99 @@ function getFilteredInstitutions() {
       || toCommuneLookupKey(getInstitutionCommune(item)) === toCommuneLookupKey(currentCommuneFilter);
     return regionOk && provinceOk && communeOk;
   });
+}
+
+function getVisibleInstitutionsForStats() {
+  return getFilteredInstitutions().filter(item => {
+    const reseau = getResValue(item, ['reseau', 'abr_reseau']) || '';
+    return reseauVisibility?.[reseau] !== false;
+  });
+}
+
+function getFilteredPopulationTotal() {
+  return getFilteredPopulationBreakdown().totalPopulation;
+}
+
+function getFilteredPopulationBreakdown() {
+  if (!communesLayer) {
+    return {
+      totalPopulation: 0,
+      moroccans: 0,
+      foreigners: 0,
+      households: 0
+    };
+  }
+
+  const selectedProvinceCodes = currentProvinceFilter ? getProvinceCodesForFilter(currentProvinceFilter) : new Set();
+  let totalPopulation = 0;
+  let totalMoroccans = 0;
+  let totalForeigners = 0;
+  let totalHouseholds = 0;
+
+  communesLayer.eachLayer(layer => {
+    const props = layer.feature?.properties || {};
+    const province = getCommuneProvinceName(props);
+    const communeName = getLayerCommuneName(props);
+    const communeProvinceCode = getCommuneProvinceCode(props);
+    const codeRegion = communeProvinceCode ? provinceCodeToRegionMap[communeProvinceCode] || '' : '';
+    const region = getLayerRegionName(props, province) || codeRegion;
+
+    const matchesRegion = !currentRegionFilter || region === currentRegionFilter;
+    const matchesProvince = !currentProvinceFilter
+      || (selectedProvinceCodes.size > 0 && selectedProvinceCodes.has(communeProvinceCode));
+    const matchesCommune = !currentCommuneFilter
+      || toCommuneLookupKey(communeName) === toCommuneLookupKey(currentCommuneFilter);
+
+    if (!matchesRegion || !matchesProvince || !matchesCommune) return;
+
+    const rawPopulation = Number(getResValue(props, ['Populati_1', 'population', 'Population', 'POPULATION']) || 0);
+    if (Number.isFinite(rawPopulation)) {
+      totalPopulation += rawPopulation;
+    }
+
+    const rawMoroccans = Number(getResValue(props, ['Marocains_', 'Marocains', 'moroccans']) || 0);
+    if (Number.isFinite(rawMoroccans)) {
+      totalMoroccans += rawMoroccans;
+    }
+
+    const rawForeigners = Number(getResValue(props, ['Etrangers_', 'Etrangers', 'foreigners']) || 0);
+    if (Number.isFinite(rawForeigners)) {
+      totalForeigners += rawForeigners;
+    }
+
+    const rawHouseholds = Number(getResValue(props, ['Menages_', 'Menages', 'households']) || 0);
+    if (Number.isFinite(rawHouseholds)) {
+      totalHouseholds += rawHouseholds;
+    }
+  });
+
+  return {
+    totalPopulation: Math.round(totalPopulation),
+    moroccans: Math.round(totalMoroccans),
+    foreigners: Math.round(totalForeigners),
+    households: Math.round(totalHouseholds)
+  };
+}
+
+function getOfficialRegionPopulation2024(regionName) {
+  const normalizedRegion = normalizeRegionName(regionName);
+  if (!normalizedRegion) return null;
+
+  const directKey = toCanonicalKey(normalizedRegion);
+  if (directKey && RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[directKey] !== undefined) {
+    return RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[directKey];
+  }
+
+  ensureFrenchCanonicalMaps();
+  const frenchFromArabic = REGION_FRENCH_BY_ARABIC_CANONICAL?.get(directKey) || '';
+  if (frenchFromArabic) {
+    const frenchKey = toCanonicalKey(normalizeRegionName(frenchFromArabic));
+    if (frenchKey && RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[frenchKey] !== undefined) {
+      return RGPH2024_OFFICIAL_REGION_POPULATION_BY_CANONICAL[frenchKey];
+    }
+  }
+
+  return null;
 }
 
 function getAvailableRegionNames() {
@@ -1986,9 +2579,11 @@ function updateProvinceLayerByFilters(shouldFitBounds = true) {
       }
     }
 
+    const strokeStyle = getPolygonStrokeStyle('province', matches);
+
     layer.setStyle({
-      color: matches ? '#333' : '#bbb',
-      weight: matches ? 2.5 : 1,
+      color: strokeStyle.color,
+      weight: strokeStyle.weight,
       fillColor,
       fillOpacity
     });
@@ -2017,7 +2612,7 @@ function updateCommuneLayerByFilters() {
 
   communesLayer.eachLayer(layer => {
     const props = layer.feature?.properties || {};
-    const province = getLayerProvinceName(props);
+    const province = getCommuneProvinceName(props);
     const communeName = getLayerCommuneName(props);
     const communeProvinceCode = getCommuneProvinceCode(props);
     const codeRegion = communeProvinceCode ? provinceCodeToRegionMap[communeProvinceCode] || '' : '';
@@ -2051,9 +2646,11 @@ function updateCommuneLayerByFilters() {
       }
     }
 
+    const strokeStyle = getPolygonStrokeStyle('commune', matches);
+
     layer.setStyle({
-      color: matches ? '#666' : '#cfcfcf',
-      weight: matches ? 1 : 0.6,
+      color: strokeStyle.color,
+      weight: strokeStyle.weight,
       fillColor,
       fillOpacity
     });
@@ -2105,19 +2702,46 @@ function applyGeographicFilters({ region, province, commune, fitBounds = true } 
     createPivot(getFilteredInstitutions());
   }
   updateLegend();
+  syncAppStateToUrl();
 }
 
-/* ============ MAP INITIALIZATION ============ */
-function initMap() {
-  map = L.map('map').setView(CONFIG.MAP_CENTER, CONFIG.MAP_ZOOM);
+function getBaseMapTileUrl() {
+  return isDarkTheme()
+    ? 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png';
+}
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+function createBaseMapTileLayer(url) {
+  return L.tileLayer(url, {
     maxZoom: 19,
     subdomains: 'abcd',
     crossOrigin: 'anonymous',
     referrerPolicy: 'no-referrer',
     attribution: '© OpenStreetMap © CARTO'
-  }).addTo(map);
+  });
+}
+
+function applyBaseMapTheme() {
+  if (!map || typeof L === 'undefined') return;
+
+  const nextUrl = getBaseMapTileUrl();
+  if (baseMapTileLayer && baseMapTileLayer._url === nextUrl) return;
+
+  if (baseMapTileLayer && map.hasLayer(baseMapTileLayer)) {
+    map.removeLayer(baseMapTileLayer);
+  }
+
+  baseMapTileLayer = createBaseMapTileLayer(nextUrl);
+  baseMapTileLayer.addTo(map);
+  if (typeof baseMapTileLayer.bringToBack === 'function') {
+    baseMapTileLayer.bringToBack();
+  }
+}
+
+/* ============ MAP INITIALIZATION ============ */
+function initMap() {
+  map = L.map('map').setView(CONFIG.MAP_CENTER, CONFIG.MAP_ZOOM);
+  applyBaseMapTheme();
 
   // Create layers once
   provincesLayer = createProvinceLayer();
@@ -2207,6 +2831,7 @@ function applyReseauFilter() {
   if (layerVisibility.RawInstitutions && markersRawGroup && !map.hasLayer(markersRawGroup)) {
     map.addLayer(markersRawGroup);
   }
+  updateHeaderStats();
 }
 
 function buildAreaLabelHtml(text, type = 'commune', options = {}) {
@@ -2499,8 +3124,9 @@ function resolveProvinceLabelObstacles() {
 }
 
 function createProvinceLayer() {
+  const defaultStroke = getPolygonStrokeStyle('province', false);
   return L.geoJSON(null, {
-    style: { color: '#333', weight: 2, fillOpacity: 0.03 },
+    style: { color: defaultStroke.color, weight: defaultStroke.weight, fillOpacity: 0.03 },
     onEachFeature: (f, l) => {
       const props = f?.properties || {};
       bindSmartAreaPopup(l, buildProvincePopup(props));
@@ -2527,8 +3153,9 @@ function createProvinceLayer() {
 }
 
 function createCommuneLayer() {
+  const defaultStroke = getPolygonStrokeStyle('commune', false);
   const layer = L.geoJSON(null, {
-    style: { color: '#666', weight: 1, fillOpacity: 0.01 },
+    style: { color: defaultStroke.color, weight: defaultStroke.weight, fillOpacity: 0.01 },
     onEachFeature: (f, l) => {
       const rawName = getResValue(f.properties, ['NAME_2', 'NAME_1', 'NAME']) || t('unknown');
       const displayName = toArabicCommuneName(rawName, f?.properties || {});
@@ -2667,10 +3294,26 @@ async function loadInstitutionsData() {
 
 /* ============ HEADER STATS ============ */
 function updateHeaderStats() {
-  document.getElementById('totalInstitutions').textContent = allInstitutions.length;
-  document.getElementById('totalNetworks').textContent = new Set(allInstitutions.map(i => getResValue(i, ['reseau', 'abr_reseau']))).size;
-  document.getElementById('totalRegions').textContent = new Set(allInstitutions.map(i => i.region)).size;
-  updateLandingStats();
+  const visibleInstitutions = getVisibleInstitutionsForStats();
+  const institutions = visibleInstitutions.length;
+  const networks = new Set(visibleInstitutions.map(i => getResValue(i, ['reseau', 'abr_reseau'])).filter(Boolean)).size;
+  const regions = new Set(visibleInstitutions.map(getInstitutionRegion).filter(Boolean)).size;
+  const provinces = new Set(visibleInstitutions.map(getInstitutionProvince).filter(Boolean)).size;
+  const filteredPopulationDetails = getFilteredPopulationBreakdown();
+  const hasGeographicFilter = !!(currentRegionFilter || currentProvinceFilter || currentCommuneFilter);
+  const hasRegionOnlyFilter = !!(currentRegionFilter && !currentProvinceFilter && !currentCommuneFilter);
+  const officialRegionPopulation = hasRegionOnlyFilter ? getOfficialRegionPopulation2024(currentRegionFilter) : null;
+  const population = !hasGeographicFilter
+    ? RGPH2024_OFFICIAL_NATIONAL_POPULATION
+    : (officialRegionPopulation ?? filteredPopulationDetails.totalPopulation);
+
+  document.getElementById('totalInstitutions').textContent = formatIntegerForUi(institutions);
+  document.getElementById('totalNetworks').textContent = formatIntegerForUi(networks);
+  document.getElementById('totalRegions').textContent = formatIntegerForUi(regions);
+  document.getElementById('totalProvinces').textContent = formatIntegerForUi(provinces);
+  document.getElementById('totalPopulation').textContent = formatIntegerForUi(population);
+
+  updateLandingStats({ institutions, networks, regions, provinces, population, populationDetails: filteredPopulationDetails });
 }
 
 /* ============ LEGEND ============ */
@@ -3724,7 +4367,7 @@ function initSearch() {
 
 function renderSearchResults(results, container) {
   if (results.length === 0) {
-    container.innerHTML = '<div style="padding: 12px; text-align: center; color: #666;">لا توجد نتائج</div>';
+    container.innerHTML = `<div style="padding: 12px; text-align: center; color: #666;">${escapeHtml(langText('لا توجد نتائج', 'Aucun résultat'))}</div>`;
     container.style.display = 'block';
     return;
   }
@@ -4066,13 +4709,24 @@ function buildExcelPivotRows(level, fieldOptions = []) {
   const activeTheme = getActiveExcelTheme();
   if (!activeTheme) return [];
 
+  const hasGeoFilters = !!(currentRegionFilter || currentProvinceFilter || currentCommuneFilter);
+  const allowedProvincesFromFilters = hasGeoFilters
+    ? new Set(getFilteredInstitutions().map(getInstitutionProvince).filter(Boolean))
+    : null;
+
   if (level === 'province') {
     if (!provincesLayer?.eachLayer) return [];
     const rows = [];
     provincesLayer.eachLayer((layer) => {
       const props = layer?.feature?.properties || {};
       const province = getLayerProvinceName(props) || '—';
-      const region = getLayerRegionName(props, province) || 'غير محدد';
+      const normalizedProvince = normalizeProvinceName(province);
+      const region = getLayerRegionName(props, province) || t('unknown');
+      const matchesRegion = !currentRegionFilter || normalizeRegionName(region) === currentRegionFilter;
+      const matchesProvince = !currentProvinceFilter || normalizedProvince === currentProvinceFilter;
+      const matchesCommune = !currentCommuneFilter
+        || (allowedProvincesFromFilters instanceof Set && allowedProvincesFromFilters.has(normalizedProvince));
+      if (!matchesRegion || !matchesProvince || !matchesCommune) return;
       const values = {};
       let hasAnyValue = false;
 
@@ -4088,7 +4742,10 @@ function buildExcelPivotRows(level, fieldOptions = []) {
       rows.push({ region, province, commune: '', values });
     });
 
-    rows.sort((a, b) => a.region.localeCompare(b.region) || a.province.localeCompare(b.province));
+    rows.sort((a, b) => (
+      compareLocalizedRegionValues(a.region, b.region)
+      || compareLocalizedProvinceValues(a.province, b.province)
+    ));
     return rows;
   }
 
@@ -4096,9 +4753,14 @@ function buildExcelPivotRows(level, fieldOptions = []) {
   const rows = [];
   communesLayer.eachLayer((layer) => {
     const props = layer?.feature?.properties || {};
-    const province = getLayerProvinceName(props) || '—';
-    const region = getLayerRegionName(props, province) || 'غير محدد';
+    const province = getCommuneProvinceName(props) || '—';
+    const region = getLayerRegionName(props, province) || t('unknown');
     const commune = getLayerCommuneName(props) || '—';
+    const matchesRegion = !currentRegionFilter || normalizeRegionName(region) === currentRegionFilter;
+    const matchesProvince = !currentProvinceFilter || normalizeProvinceName(province) === currentProvinceFilter;
+    const matchesCommune = !currentCommuneFilter
+      || toCommuneLookupKey(commune) === toCommuneLookupKey(currentCommuneFilter);
+    if (!matchesRegion || !matchesProvince || !matchesCommune) return;
     const values = {};
     let hasAnyValue = false;
 
@@ -4115,9 +4777,9 @@ function buildExcelPivotRows(level, fieldOptions = []) {
   });
 
   rows.sort((a, b) => (
-    a.region.localeCompare(b.region)
-    || a.province.localeCompare(b.province)
-    || a.commune.localeCompare(b.commune)
+    compareLocalizedRegionValues(a.region, b.region)
+    || compareLocalizedProvinceValues(a.province, b.province)
+    || compareLocalizedCommuneValues(a.commune, b.commune)
   ));
   return rows;
 }
@@ -4138,6 +4800,7 @@ function closePivotPanel() {
   container.classList.add('map-only');
   document.getElementById('pivotPanel')?.setAttribute('aria-hidden', 'true');
   setTimeout(() => map?.invalidateSize?.(), 300);
+  syncAppStateToUrl();
 }
 
 function renderProvinceStatsTable(agg, categories, reseaux, selectedCategories) {
@@ -4147,9 +4810,10 @@ function renderProvinceStatsTable(agg, categories, reseaux, selectedCategories) 
   const fieldOptions = getExcelFilledFieldOptions('province');
   const rows = buildExcelPivotRows('province', fieldOptions);
   const percentageFieldKeys = inferPercentageFieldKeys(rows, fieldOptions);
+  const emptyMessage = langText('لا توجد أعمدة قيم ممتلئة في ورقة provinces_db', 'Aucune colonne de valeurs remplie dans la feuille provinces_db');
 
   if (!fieldOptions.length) {
-    container.innerHTML = '<div class="pivot-empty">لا توجد أعمدة قيم ممتلئة في ورقة provinces_db</div>';
+    container.innerHTML = `<div class="pivot-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
@@ -4162,7 +4826,9 @@ function renderProvinceStatsTable(agg, categories, reseaux, selectedCategories) 
   html += '</tr></thead><tbody>';
 
   rows.forEach((row) => {
-    html += `<tr><td>${escapeHtml(row.region)}</td><td>${escapeHtml(row.province)}</td>`;
+    const regionLabel = getLocalizedRegionDisplayName(row.region);
+    const provinceLabel = getLocalizedProvinceDisplayName(row.province);
+    html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td>`;
     fieldOptions.forEach((fieldOption) => {
       const value = row.values[fieldOption.key];
       const numericClass = typeof value === 'number' && Number.isFinite(value) ? 'num' : '';
@@ -4185,9 +4851,10 @@ function renderCommuneStatsTable(agg, categories, reseaux, selectedCategories) {
   const fieldOptions = getExcelFilledFieldOptions('commune');
   const rows = buildExcelPivotRows('commune', fieldOptions);
   const percentageFieldKeys = inferPercentageFieldKeys(rows, fieldOptions);
+  const emptyMessage = langText('لا توجد أعمدة قيم ممتلئة في ورقة communes_db', 'Aucune colonne de valeurs remplie dans la feuille communes_db');
 
   if (!fieldOptions.length) {
-    container.innerHTML = '<div class="pivot-empty">لا توجد أعمدة قيم ممتلئة في ورقة communes_db</div>';
+    container.innerHTML = `<div class="pivot-empty">${escapeHtml(emptyMessage)}</div>`;
     return;
   }
 
@@ -4200,7 +4867,10 @@ function renderCommuneStatsTable(agg, categories, reseaux, selectedCategories) {
   html += '</tr></thead><tbody>';
 
   rows.forEach((row) => {
-    html += `<tr><td>${escapeHtml(row.region)}</td><td>${escapeHtml(row.province)}</td><td class="comm">${escapeHtml(row.commune)}</td>`;
+    const regionLabel = getLocalizedRegionDisplayName(row.region);
+    const provinceLabel = getLocalizedProvinceDisplayName(row.province);
+    const communeLabel = getLocalizedCommuneDisplayName(row.commune);
+    html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td><td class="comm">${escapeHtml(communeLabel)}</td>`;
     fieldOptions.forEach((fieldOption) => {
       const value = row.values[fieldOption.key];
       const numericClass = typeof value === 'number' && Number.isFinite(value) ? 'num' : '';
@@ -4249,6 +4919,7 @@ function togglePivotPanelByView(view) {
   if (container) container.dataset.pivotView = currentPivotView;
   renderCurrentPivotView(getSelectedPivotCategoriesFromUi(lastPivotData?.categories || []));
   openPivotPanel();
+  syncAppStateToUrl();
 }
 
 function renderPivotTable(agg, categories, reseaux, selectedCategories) {
@@ -4285,15 +4956,15 @@ function renderPivotTable(agg, categories, reseaux, selectedCategories) {
   html += '<tbody>';
 
   let grandTotal = 0;
-  Array.from(agg.keys()).sort().forEach(region => {
+  Array.from(agg.keys()).sort(compareLocalizedRegionValues).forEach(region => {
     const provMap = agg.get(region);
     let regionFirst = true;
 
-    Array.from(provMap.keys()).sort().forEach(prov => {
+    Array.from(provMap.keys()).sort(compareLocalizedProvinceValues).forEach(prov => {
       const commMap = provMap.get(prov);
       let provFirst = true;
 
-      Array.from(commMap.keys()).sort().forEach(comm => {
+      Array.from(commMap.keys()).sort(compareLocalizedCommuneValues).forEach(comm => {
         const cell = commMap.get(comm);
         let totalToShow = selectedSet.size === categories.length 
           ? cell.total 
@@ -4303,21 +4974,21 @@ function renderPivotTable(agg, categories, reseaux, selectedCategories) {
 
         html += '<tr>';
         if (regionFirst) {
-          html += `<td rowspan="${regionRows.get(region)}">${escapeHtml(region)}</td>`;
+          html += `<td rowspan="${regionRows.get(region)}">${escapeHtml(getLocalizedRegionDisplayName(region))}</td>`;
           regionFirst = false;
         }
         if (provFirst) {
-          html += `<td rowspan="${provRows.get(region + '||' + prov)}">${escapeHtml(prov)}</td>`;
+          html += `<td rowspan="${provRows.get(region + '||' + prov)}">${escapeHtml(getLocalizedProvinceDisplayName(prov))}</td>`;
           provFirst = false;
         }
-        html += `<td class="comm">${escapeHtml(comm)}</td><td class="num">${totalToShow}</td></tr>`;
+        html += `<td class="comm">${escapeHtml(getLocalizedCommuneDisplayName(comm))}</td><td class="num">${totalToShow}</td></tr>`;
         grandTotal += totalToShow;
       });
     });
   });
 
   html += '</tbody>';
-  html += `<tfoot><tr><td colspan="3"><strong>المجموع</strong></td><td class="num"><strong>${grandTotal}</strong></td></tr></tfoot>`;
+  html += `<tfoot><tr><td colspan="3"><strong>${escapeHtml(langText('المجموع', 'Total'))}</strong></td><td class="num"><strong>${grandTotal}</strong></td></tr></tfoot>`;
   html += '</table></div>';
 
   container.innerHTML = html;
@@ -4466,7 +5137,7 @@ function exportToXLSX() {
   if (isHealthView && dynamicHeaders.length) {
     const totalHeader = dynamicHeaders[0];
     const totalSum = rows.reduce((sum, row) => sum + (Number(row[totalHeader]) || 0), 0);
-    formattedRows.push({ 'Région': '', 'Province': '', 'Commune': 'المجموع', [totalHeader]: totalSum });
+    formattedRows.push({ 'Région': '', 'Province': '', 'Commune': langText('المجموع', 'Total'), [totalHeader]: totalSum });
   }
 
   const ws = XLSX.utils.json_to_sheet(formattedRows, { header: headers });
@@ -4929,16 +5600,26 @@ function initUI() {
       ? (isFrenchLanguage() ? '0️⃣ Masquer zéros' : '0️⃣ إخفاء أصفار')
       : (isFrenchLanguage() ? '0️⃣ Afficher zéros' : '0️⃣ عرض أصفار');
     if (lastPivotData) createPivot(lastPivotData);
+    syncAppStateToUrl();
   });
 
   // Language toggle
   document.getElementById('languageToggleBtn')?.addEventListener('click', () => {
     toggleAppLanguage();
   });
+
+  // Theme toggle
+  document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
+    toggleAppTheme();
+  });
 }
 
 /* ============ INITIALIZATION ============ */
 async function initApp() {
+  const initialUrlState = readAppStateFromUrl();
+  applyInitialPreferencesFromUrl(initialUrlState);
+  suppressUrlStateSync = true;
+  initializeTheme();
   showLoadingOverlay(true);
 
   try {
@@ -4955,9 +5636,14 @@ async function initApp() {
       loadInstitutionsData()
     ]);
 
+    applyRuntimeStateFromUrl(initialUrlState);
+    suppressUrlStateSync = false;
+    syncAppStateToUrl();
+
     hideLoadingOverlay();
     showToast(t('appLoaded'), 'success');
   } catch (error) {
+    suppressUrlStateSync = false;
     hideLoadingOverlay();
     showToast(t('appLoadError'), 'error');
     console.error(error);
