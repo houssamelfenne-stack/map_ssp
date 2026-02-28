@@ -47,6 +47,19 @@
             <span class="landing-stat-label">الجهات المغطاة</span>
             <span id="landingRegions" class="landing-stat-value">0</span>
           </div>
+          <div class="landing-stat">
+            <span class="landing-stat-label">الأقاليم المغطاة</span>
+            <span id="landingProvinces" class="landing-stat-value">0</span>
+          </div>
+          <div class="landing-stat landing-stat-population">
+            <span class="landing-stat-label">الساكنة</span>
+            <span id="landingPopulation" class="landing-stat-value">0</span>
+            <div class="landing-stat-details">
+              <span><strong id="landingPopulationMoroccans">0</strong> <span id="landingPopulationMoroccansLabel">المغاربة</span></span>
+              <span><strong id="landingPopulationForeigners">0</strong> <span id="landingPopulationForeignersLabel">الأجانب</span></span>
+              <span><strong id="landingPopulationHouseholds">0</strong> <span id="landingPopulationHouseholdsLabel">الأسر</span></span>
+            </div>
+          </div>
         </div>
 
         <div class="landing-highlights">
@@ -125,11 +138,23 @@
           <span id="totalRegionsLabel" class="stat-label">الجهات:</span>
           <span id="totalRegions" class="stat-value">0</span>
         </div>
+        <div class="stat-item">
+          <span id="totalProvincesLabel" class="stat-label">الأقاليم:</span>
+          <span id="totalProvinces" class="stat-value">0</span>
+        </div>
+        <div class="stat-item">
+          <span id="totalPopulationLabel" class="stat-label">عدد السكان:</span>
+          <span id="totalPopulation" class="stat-value">0</span>
+        </div>
       </div>
       <div class="header-actions">
         <button id="languageToggleBtn" class="header-btn" title="Changer la langue" aria-label="تغيير اللغة">
           <i class="fas fa-language"></i>
           <span id="languageToggleLabel">FR</span>
+        </button>
+        <button id="themeToggleBtn" class="header-btn" title="تفعيل الوضع الداكن" aria-label="تبديل الوضع الداكن">
+          <i id="themeToggleIcon" class="fas fa-moon"></i>
+          <span id="themeToggleLabel">داكن</span>
         </button>
         <button id="helpBtn" class="header-btn" title="المساعدة والاختصارات" aria-label="المساعدة">
           <i class="fas fa-question-circle"></i>

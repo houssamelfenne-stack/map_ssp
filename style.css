@@ -26,6 +26,10 @@ html, body {
   background: #fff;
 }
 
+html {
+  zoom: 80%;
+}
+
 body {
   display: flex;
   flex-direction: column;
@@ -384,7 +388,7 @@ body.landing-open #pivotQuickActions {
 .landing-stats {
   margin-top: 18px;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -407,6 +411,24 @@ body.landing-open #pivotQuickActions {
   font-size: 22px;
   font-weight: 700;
   color: var(--accent);
+}
+
+.landing-stat-population {
+  text-align: right;
+}
+
+.landing-stat-details {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.landing-stat-details strong {
+  color: var(--accent);
+  font-weight: 700;
 }
 
 .landing-highlights {
@@ -1685,6 +1707,219 @@ body.lang-fr .search-panel {
   padding: 6px 0;
   padding-right: 20px;
   color: var(--text-secondary);
+}
+
+/* ============ Dark Theme ============ */
+body,
+.app-header,
+.header-btn,
+.stat-item,
+.search-container,
+.search-results,
+.legend,
+.pivot-panel,
+.modal-content,
+.toggle-pivot,
+.toggle-legend,
+.toggle-stats,
+.route-info-panel,
+.main-landing {
+  transition: background-color 0.25s ease, color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease;
+}
+
+body[data-theme="dark"] {
+  --panel-bg: rgba(15, 23, 42, 0.92);
+  --accent: #60a5fa;
+  --accent-light: #93c5fd;
+  --text-primary: #e2e8f0;
+  --text-secondary: #94a3b8;
+  --border-color: #334155;
+  --bg-light: #1e293b;
+  --shadow-sm: 0 1px 3px rgba(2, 6, 23, 0.55);
+  --shadow-md: 0 10px 28px rgba(2, 6, 23, 0.5);
+  --shadow-lg: 0 20px 44px rgba(2, 6, 23, 0.55);
+  background: #020617;
+}
+
+body[data-theme="dark"] .app-header {
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.96), rgba(30, 41, 59, 0.96));
+  border-bottom-color: #3b82f6;
+}
+
+body[data-theme="dark"] #appTitleText {
+  background: rgba(30, 41, 59, 0.82);
+}
+
+body[data-theme="dark"] .header-btn,
+body[data-theme="dark"] .stat-item,
+body[data-theme="dark"] .search-container,
+body[data-theme="dark"] .search-results,
+body[data-theme="dark"] .route-info-panel,
+body[data-theme="dark"] .legend,
+body[data-theme="dark"] .legend-group,
+body[data-theme="dark"] .legend-geo-filter,
+body[data-theme="dark"] .legend-symbology-filter,
+body[data-theme="dark"] .pivot-panel,
+body[data-theme="dark"] .dropdown-panel,
+body[data-theme="dark"] .modal-content,
+body[data-theme="dark"] .loading-spinner,
+body[data-theme="dark"] .main-landing,
+body[data-theme="dark"] .landing-stat,
+body[data-theme="dark"] .landing-card {
+  background-color: rgba(15, 23, 42, 0.92);
+  border-color: #334155;
+}
+
+body[data-theme="dark"] .main-landing {
+  background: linear-gradient(135deg, rgba(2, 6, 23, 0.95), rgba(15, 23, 42, 0.95));
+}
+
+body[data-theme="dark"] .landing-badge,
+body[data-theme="dark"] .landing-secondary-btn,
+body[data-theme="dark"] .search-result-item:hover,
+body[data-theme="dark"] .cat-item:hover,
+body[data-theme="dark"] .cat-actions button:hover,
+body[data-theme="dark"] .modal-close:hover,
+body[data-theme="dark"] .legend-geo-reset:hover {
+  background: #1e293b;
+}
+
+body[data-theme="dark"] .search-input,
+body[data-theme="dark"] .legend-geo-select,
+body[data-theme="dark"] .legend-geo-reset,
+body[data-theme="dark"] .legend-geo-value-input,
+body[data-theme="dark"] .cat-search,
+body[data-theme="dark"] .cat-actions button,
+body[data-theme="dark"] .dropdown-toggle,
+body[data-theme="dark"] .toggle-zeros-btn,
+body[data-theme="dark"] .leaflet-control-layers,
+body[data-theme="dark"] .leaflet-popup-content-wrapper,
+body[data-theme="dark"] .leaflet-popup-tip {
+  background: #0f172a;
+  color: #e2e8f0;
+  border-color: #334155;
+}
+
+body[data-theme="dark"] .popup-title {
+  color: #93c5fd;
+}
+
+body[data-theme="dark"] .popup-value {
+  color: #dbeafe;
+}
+
+body[data-theme="dark"] .popup-row {
+  border-top-color: rgba(148, 163, 184, 0.28);
+}
+
+body[data-theme="dark"] .popup-row span {
+  color: #94a3b8;
+}
+
+body[data-theme="dark"] .popup-row strong {
+  color: #e2e8f0;
+}
+
+body[data-theme="dark"] .leaflet-container a.leaflet-popup-close-button {
+  color: #cbd5e1;
+}
+
+body[data-theme="dark"] .leaflet-container a.leaflet-popup-close-button:hover {
+  color: #ffffff;
+}
+
+body[data-theme="dark"] .result-badge,
+body[data-theme="dark"] .shortcuts-table kbd,
+body[data-theme="dark"] .pivot-table th,
+body[data-theme="dark"] .pivot-table tfoot td,
+body[data-theme="dark"] .pivot-table tr.subtotal td,
+body[data-theme="dark"] .pivot-table tr.region-subtotal td {
+  background: #1e293b;
+  color: #bfdbfe;
+}
+
+body[data-theme="dark"] .pivot-table td {
+  background: #0f172a;
+  color: #e2e8f0;
+}
+
+body[data-theme="dark"] .pivot-table th,
+body[data-theme="dark"] .pivot-table td,
+body[data-theme="dark"] .shortcuts-table tr {
+  border-color: #334155;
+}
+
+body[data-theme="dark"] .header-btn:hover,
+body[data-theme="dark"] .toggle-pivot:hover,
+body[data-theme="dark"] .toggle-stats:hover,
+body[data-theme="dark"] .toggle-legend:hover,
+body[data-theme="dark"] .export-btn:hover {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #eff6ff;
+}
+
+body[data-theme="dark"] .header-btn.active,
+body[data-theme="dark"] .toggle-pivot.active,
+body[data-theme="dark"] .toggle-stats.active,
+body[data-theme="dark"] .toggle-zeros-btn.active {
+  background: #2563eb;
+  border-color: #2563eb;
+  color: #eff6ff;
+}
+
+body[data-theme="dark"] .legend-title,
+body[data-theme="dark"] .legend-group-title,
+body[data-theme="dark"] .modal-header h2,
+body[data-theme="dark"] .modal-body h3,
+body[data-theme="dark"] .pivot-header strong,
+body[data-theme="dark"] .stat-value {
+  color: #93c5fd;
+}
+
+body[data-theme="dark"] .loading-overlay {
+  background: rgba(2, 6, 23, 0.78);
+}
+
+body[data-theme="dark"] .area-label {
+  background: rgba(15, 23, 42, 0.88);
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+body[data-theme="dark"] .area-label-province {
+  color: #e2e8f0;
+  text-shadow:
+    -1px -1px 0 rgba(15, 23, 42, 0.95),
+     1px -1px 0 rgba(15, 23, 42, 0.95),
+    -1px  1px 0 rgba(15, 23, 42, 0.95),
+     1px  1px 0 rgba(15, 23, 42, 0.95),
+     0 0 2px rgba(15, 23, 42, 0.85);
+}
+
+body[data-theme="dark"] .area-label-commune {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  color: #cbd5e1;
+  text-shadow: 0 1px 1px rgba(15, 23, 42, 0.9);
+}
+
+body[data-theme="dark"] .leaflet-container {
+  background: #111827;
+}
+
+body[data-theme="dark"] .leaflet-tile {
+  outline: 1px solid transparent;
+  border: none;
+}
+
+body[data-theme="dark"] ::-webkit-scrollbar-thumb {
+  background: #334155;
+}
+
+body[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
 }
 
 /* ============ Responsive ============ */
