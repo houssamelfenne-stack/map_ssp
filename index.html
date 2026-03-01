@@ -13,15 +13,25 @@
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;600;700&display=swap" />
-    <link rel="stylesheet" href="style.css?v=20260228-1" />
+    <link rel="stylesheet" href="style.css?v=20260301-next-2" />
   </head>
   <body class="landing-open">
 
     <!-- Loading Overlay -->
     <div id="loadingOverlay" class="loading-overlay">
-      <div class="loading-spinner">
-        <div class="spinner"></div>
-        <p>جارٍ تحميل البيانات...</p>
+      <div class="loading-spinner" role="status" aria-live="polite" aria-busy="true">
+        <div class="loading-logo-shell">
+          <img src="logo-main.png" alt="شعار المنصة" class="loading-logo" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+          <div class="loading-logo-fallback" style="display:none;"><i class="fas fa-map-location-dot"></i></div>
+        </div>
+        <div class="loading-progress-track" aria-hidden="true">
+          <span class="loading-progress-indeterminate"></span>
+        </div>
+        <div class="loading-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="loading-meta">
+          <p id="loadingStageText">جارٍ تحميل البيانات...</p>
+          <span id="loadingPercentText">0%</span>
+        </div>
       </div>
     </div>
 
@@ -193,6 +203,7 @@
         <button id="togglePivotBtn" class="toggle-pivot" title="إحصائيات العرض الصحي"><i class="fas fa-table"></i> <span id="togglePivotBtnText">احصائيات العرض الصحي</span></button>
         <button id="togglePivotProvinceBtn" class="toggle-pivot" title="إحصائيات الاقاليم"><i class="fas fa-chart-column"></i> <span id="togglePivotProvinceBtnText">احصائيات الاقاليم</span></button>
         <button id="togglePivotCommuneBtn" class="toggle-pivot" title="إحصائيات الجماعات"><i class="fas fa-chart-bar"></i> <span id="togglePivotCommuneBtnText">احصائيات الجماعات</span></button>
+        <button id="togglePivotPopulationBtn" class="toggle-pivot" title="إحصائيات سكان RGPH 2024"><i class="fas fa-people-group"></i> <span id="togglePivotPopulationBtnText">إحصائيات سكان RGPH 2024</span></button>
       </div>
     </div>
 
@@ -235,6 +246,6 @@
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.6/dist/purify.min.js"></script>
     <!-- html2canvas for map PNG export -->
     <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
-    <script src="app.js?v=20260228-1"></script>
+    <script src="app.js?v=20260301-rgph2024-1"></script>
   </body>
 </html>

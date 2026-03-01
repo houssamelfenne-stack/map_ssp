@@ -38,7 +38,8 @@ const GRADUATED_PERCENTAGE_MAX = 100;
 const PIVOT_VIEW = {
   HEALTH: 'health',
   PROVINCE: 'province',
-  COMMUNE: 'commune'
+  COMMUNE: 'commune',
+  POPULATION_2024: 'population_2024'
 };
 const APP_LANGUAGE_STORAGE_KEY = 'app_language';
 const APP_THEME_STORAGE_KEY = 'app_theme';
@@ -88,12 +89,14 @@ const PIVOT_VIEW_TITLE = {
   ar: {
     [PIVOT_VIEW.HEALTH]: 'احصائيات العرض الصحي',
     [PIVOT_VIEW.PROVINCE]: 'احصائيات الاقاليم',
-    [PIVOT_VIEW.COMMUNE]: 'احصائيات الجماعات'
+    [PIVOT_VIEW.COMMUNE]: 'احصائيات الجماعات',
+    [PIVOT_VIEW.POPULATION_2024]: 'إحصائيات السكان - RGPH 2024'
   },
   fr: {
     [PIVOT_VIEW.HEALTH]: 'Statistiques de l’offre de soins',
     [PIVOT_VIEW.PROVINCE]: 'Statistiques des provinces/préfectures',
-    [PIVOT_VIEW.COMMUNE]: 'Statistiques des communes'
+    [PIVOT_VIEW.COMMUNE]: 'Statistiques des communes',
+    [PIVOT_VIEW.POPULATION_2024]: 'Statistiques de la population RGPH 2024'
   }
 };
 const UI_TRANSLATIONS = {
@@ -108,6 +111,7 @@ const UI_TRANSLATIONS = {
     togglePivotBtnText: 'احصائيات العرض الصحي',
     togglePivotProvinceBtnText: 'احصائيات الاقاليم',
     togglePivotCommuneBtnText: 'احصائيات الجماعات',
+    togglePivotPopulationBtnText: 'إحصائيات سكان RGPH 2024',
     searchPlaceholder: 'ابحث عن مؤسسة، جماعة، إقليم...',
     languageToggleLabel: 'FR',
     themeToDarkLabel: 'داكن',
@@ -140,7 +144,8 @@ const UI_TRANSLATIONS = {
     closePivotLabel: 'إغلاق',
     pivotHealthTitle: 'إحصائيات العرض الصحي',
     pivotProvinceTitle: 'إحصائيات الأقاليم',
-    pivotCommuneTitle: 'إحصائيات الجماعات'
+    pivotCommuneTitle: 'إحصائيات الجماعات',
+    pivotPopulationTitle: 'إحصائيات السكان - RGPH 2024'
   },
   fr: {
     appTitle: 'Plateforme cartographique interactive de la santé publique',
@@ -153,6 +158,7 @@ const UI_TRANSLATIONS = {
     togglePivotBtnText: 'Statistiques de l’offre de soins',
     togglePivotProvinceBtnText: 'Statistiques des provinces/préfectures',
     togglePivotCommuneBtnText: 'Statistiques des communes',
+    togglePivotPopulationBtnText: 'Statistiques population RGPH 2024',
     searchPlaceholder: 'Rechercher un établissement, une commune, une province…',
     languageToggleLabel: 'AR',
     themeToDarkLabel: 'Sombre',
@@ -185,7 +191,8 @@ const UI_TRANSLATIONS = {
     closePivotLabel: 'Fermer',
     pivotHealthTitle: 'Statistiques de l\'offre de soins',
     pivotProvinceTitle: 'Statistiques des provinces/préfectures',
-    pivotCommuneTitle: 'Statistiques des communes'
+    pivotCommuneTitle: 'Statistiques des communes',
+    pivotPopulationTitle: 'Statistiques de la population RGPH 2024'
   }
 };
 const REGION_ARABIC_MAP = {
@@ -412,7 +419,8 @@ let currentPivotView = PIVOT_VIEW.HEALTH;
 let pivotSortStateByView = {
   [PIVOT_VIEW.HEALTH]: { key: 'region', direction: 'asc' },
   [PIVOT_VIEW.PROVINCE]: { key: 'region', direction: 'asc' },
-  [PIVOT_VIEW.COMMUNE]: { key: 'region', direction: 'asc' }
+  [PIVOT_VIEW.COMMUNE]: { key: 'region', direction: 'asc' },
+  [PIVOT_VIEW.POPULATION_2024]: { key: 'region', direction: 'asc' }
 };
 let searchDebounceTimer = null;
 let statsData = null;
@@ -741,6 +749,7 @@ function applyLanguageToStaticUi() {
   setElementText('togglePivotBtnText', t('togglePivotBtnText'));
   setElementText('togglePivotProvinceBtnText', t('togglePivotProvinceBtnText'));
   setElementText('togglePivotCommuneBtnText', t('togglePivotCommuneBtnText'));
+  setElementText('togglePivotPopulationBtnText', t('togglePivotPopulationBtnText'));
   setElementText('languageToggleLabel', t('languageToggleLabel'));
   updateThemeToggleUi();
 
@@ -811,7 +820,7 @@ function applyLanguageToStaticUi() {
   document.title = t('pageTitle');
 
   // Loading overlay text
-  const loadingText = document.querySelector('#loadingOverlay .loading-spinner p');
+  const loadingText = document.getElementById('loadingStageText');
   if (loadingText) loadingText.textContent = t('loadingText');
 
   // Clear search button
@@ -846,6 +855,9 @@ function applyLanguageToStaticUi() {
 
   const togglePivotCommuneBtn = document.getElementById('togglePivotCommuneBtn');
   if (togglePivotCommuneBtn) togglePivotCommuneBtn.title = t('pivotCommuneTitle');
+
+  const togglePivotPopulationBtn = document.getElementById('togglePivotPopulationBtn');
+  if (togglePivotPopulationBtn) togglePivotPopulationBtn.title = t('pivotPopulationTitle');
 
   const helpTitle = document.querySelector('#helpModal .modal-header h2');
   if (helpTitle) helpTitle.textContent = langText('المساعدة والاختصارات', 'Aide et raccourcis');
@@ -948,10 +960,29 @@ function rebuildAllPopups() {
 function showLoadingOverlay(show = true) {
   const overlay = document.getElementById('loadingOverlay');
   if (overlay) overlay.style.display = show ? 'flex' : 'none';
+  if (show) {
+    setLoadingStatus(t('loadingText'), 0);
+  }
 }
 
 function hideLoadingOverlay() {
   showLoadingOverlay(false);
+}
+
+function setLoadingStatus(stageText = '', progress = null) {
+  const stageEl = document.getElementById('loadingStageText');
+  const percentEl = document.getElementById('loadingPercentText');
+  const progressBar = document.querySelector('#loadingOverlay .loading-progress-indeterminate');
+
+  if (stageEl && stageText) {
+    stageEl.textContent = stageText;
+  }
+
+  if (Number.isFinite(progress)) {
+    const safeProgress = Math.max(0, Math.min(100, Math.round(progress)));
+    if (percentEl) percentEl.textContent = `${safeProgress}%`;
+    if (progressBar) progressBar.style.setProperty('--loading-progress', `${safeProgress}%`);
+  }
 }
 
 function escapeHtml(s) {
@@ -4602,7 +4633,7 @@ function buildCategoryFilterHtml(categories, selectedSet) {
 }
 
 function normalizePivotView(view) {
-  if (view === PIVOT_VIEW.PROVINCE || view === PIVOT_VIEW.COMMUNE) return view;
+  if (view === PIVOT_VIEW.PROVINCE || view === PIVOT_VIEW.COMMUNE || view === PIVOT_VIEW.POPULATION_2024) return view;
   return PIVOT_VIEW.HEALTH;
 }
 
@@ -4615,10 +4646,212 @@ function setPivotViewButtonsState() {
   const healthBtn = document.getElementById('togglePivotBtn');
   const provinceBtn = document.getElementById('togglePivotProvinceBtn');
   const communeBtn = document.getElementById('togglePivotCommuneBtn');
+  const populationBtn = document.getElementById('togglePivotPopulationBtn');
 
   healthBtn?.classList.toggle('active', currentPivotView === PIVOT_VIEW.HEALTH);
   provinceBtn?.classList.toggle('active', currentPivotView === PIVOT_VIEW.PROVINCE);
   communeBtn?.classList.toggle('active', currentPivotView === PIVOT_VIEW.COMMUNE);
+  populationBtn?.classList.toggle('active', currentPivotView === PIVOT_VIEW.POPULATION_2024);
+}
+
+function getNumericPropertyValue(props = {}, keys = []) {
+  for (const key of keys) {
+    if (!Object.prototype.hasOwnProperty.call(props, key)) continue;
+    const rawValue = props[key];
+    if (typeof rawValue === 'undefined' || rawValue === null || rawValue === '') continue;
+    const parsedValue = parseNumericValue(rawValue);
+    if (Number.isFinite(parsedValue)) return parsedValue;
+  }
+  return 0;
+}
+
+function buildPopulationCensusPivotRows() {
+  if (!communesLayer?.eachLayer) return [];
+
+  const rows = [];
+  communesLayer.eachLayer((layer) => {
+    const props = layer?.feature?.properties || {};
+    const province = getCommuneProvinceName(props) || '—';
+    const region = getLayerRegionName(props, province) || t('unknown');
+    const commune = getLayerCommuneName(props) || '—';
+
+    const matchesRegion = !currentRegionFilter || normalizeRegionName(region) === currentRegionFilter;
+    const matchesProvince = !currentProvinceFilter || normalizeProvinceName(province) === currentProvinceFilter;
+    const matchesCommune = !currentCommuneFilter
+      || toCommuneLookupKey(commune) === toCommuneLookupKey(currentCommuneFilter);
+    if (!matchesRegion || !matchesProvince || !matchesCommune) return;
+
+    const moroccans = getNumericPropertyValue(props, ['Marocains_', 'Marocains', 'moroccans']);
+    const foreigners = getNumericPropertyValue(props, ['Etrangers_', 'Etrangers', 'foreigners']);
+    const households = getNumericPropertyValue(props, ['Menages_', 'Menages', 'households']);
+    const totalPopulationRaw = getNumericPropertyValue(props, ['Populati_1', 'population', 'Population', 'POPULATION']);
+    const totalPopulation = Number.isFinite(totalPopulationRaw) && totalPopulationRaw > 0
+      ? totalPopulationRaw
+      : (moroccans + foreigners);
+
+    if (!showZeroRows && totalPopulation <= 0) return;
+
+    rows.push({
+      region,
+      province,
+      commune,
+      communeProps: props,
+      moroccans,
+      foreigners,
+      households,
+      totalPopulation
+    });
+  });
+
+  rows.sort((a, b) => (
+    compareLocalizedRegionValues(a.region, b.region)
+    || compareLocalizedProvinceValues(a.province, b.province)
+    || compareLocalizedCommuneValues(a.commune, b.commune)
+  ));
+
+  return rows;
+}
+
+function applyRgphDynamicColumnLayout(container = document.getElementById('pivotContent')) {
+  const tableWrap = container?.querySelector('.pivot-table-wrap.commune-stats-wrap');
+  const table = tableWrap?.querySelector('.pivot-table-rgph');
+  if (!table || !tableWrap) return;
+
+  const availableWidth = Math.max(0, Math.floor(tableWrap.clientWidth) - 2);
+  if (!availableWidth) return;
+
+  const ratios = isFrenchLanguage()
+    ? [0.15, 0.18, 0.21, 0.09, 0.09, 0.14, 0.14]
+    : [0.15, 0.17, 0.22, 0.09, 0.09, 0.14, 0.14];
+  const minWidths = [110, 120, 130, 70, 70, 90, 95];
+
+  const widths = ratios.map((ratio) => Math.floor(availableWidth * ratio));
+  for (let index = 0; index < widths.length; index += 1) {
+    if (widths[index] < minWidths[index]) widths[index] = minWidths[index];
+  }
+
+  let totalWidth = widths.reduce((sum, value) => sum + value, 0);
+  let overflow = totalWidth - availableWidth;
+
+  if (overflow > 0) {
+    const reducible = widths.map((value, index) => Math.max(0, value - minWidths[index]));
+    const reducibleTotal = reducible.reduce((sum, value) => sum + value, 0);
+
+    if (reducibleTotal > 0) {
+      for (let index = 0; index < widths.length; index += 1) {
+        if (reducible[index] <= 0) continue;
+        const shrink = Math.min(reducible[index], Math.round((overflow * reducible[index]) / reducibleTotal));
+        widths[index] -= shrink;
+      }
+
+      totalWidth = widths.reduce((sum, value) => sum + value, 0);
+      overflow = totalWidth - availableWidth;
+
+      if (overflow > 0) {
+        const shrinkOrder = [2, 1, 0, 5, 6, 3, 4];
+        for (const targetIndex of shrinkOrder) {
+          while (overflow > 0 && widths[targetIndex] > minWidths[targetIndex]) {
+            widths[targetIndex] -= 1;
+            overflow -= 1;
+          }
+          if (overflow <= 0) break;
+        }
+      }
+    }
+  }
+
+  const stillOverflow = widths.reduce((sum, value) => sum + value, 0) > availableWidth;
+  table.classList.toggle('rgph-compact', stillOverflow);
+
+  table.style.setProperty('--rgph-col-region', `${widths[0]}px`);
+  table.style.setProperty('--rgph-col-province', `${widths[1]}px`);
+  table.style.setProperty('--rgph-col-commune', `${widths[2]}px`);
+  table.style.setProperty('--rgph-col-moroccans', `${widths[3]}px`);
+  table.style.setProperty('--rgph-col-foreigners', `${widths[4]}px`);
+  table.style.setProperty('--rgph-col-households', `${widths[5]}px`);
+  table.style.setProperty('--rgph-col-total', `${widths[6]}px`);
+}
+
+function renderPopulationCensusStatsTable() {
+  const container = document.getElementById('pivotContent');
+  if (!container) return;
+
+  const rows = buildPopulationCensusPivotRows();
+  const grouped = new Map();
+
+  rows.forEach((row) => {
+    if (!grouped.has(row.region)) grouped.set(row.region, new Map());
+    const byProvince = grouped.get(row.region);
+    if (!byProvince.has(row.province)) byProvince.set(row.province, []);
+    byProvince.get(row.province).push(row);
+  });
+
+  let html = '';
+  html += '<div class="pivot-table-wrap commune-stats-wrap"><table class="pivot-table pivot-table-commune pivot-table-rgph">';
+  html += '<colgroup>';
+  html += '<col class="rgph-col-region">';
+  html += '<col class="rgph-col-province">';
+  html += '<col class="rgph-col-commune">';
+  html += '<col class="rgph-col-moroccans">';
+  html += '<col class="rgph-col-foreigners">';
+  html += '<col class="rgph-col-households">';
+  html += '<col class="rgph-col-total">';
+  html += '</colgroup>';
+  html += '<thead><tr>';
+  html += `<th>${escapeHtml(langText('الجهة', 'Région'))}</th>`;
+  html += `<th>${escapeHtml(langText('الإقليم/العمالة', 'Province/Préfecture'))}</th>`;
+  html += `<th>${escapeHtml(langText('الجماعة', 'Commune'))}</th>`;
+  html += `<th>${escapeHtml(langText('المغاربة', 'Marocains'))}</th>`;
+  html += `<th>${escapeHtml(langText('الأجانب', 'Étrangers'))}</th>`;
+  html += `<th>${escapeHtml(langText('الأسر', 'Ménages'))}</th>`;
+  html += `<th>${escapeHtml(langText('إجمالي السكان', 'Population totale'))}</th>`;
+  html += '</tr></thead><tbody>';
+
+  grouped.forEach((provinceMap, regionKey) => {
+    let regionMoroccans = 0;
+    let regionForeigners = 0;
+    let regionHouseholds = 0;
+    let regionPopulation = 0;
+
+    provinceMap.forEach((provinceRows, provinceKey) => {
+      let provinceMoroccans = 0;
+      let provinceForeigners = 0;
+      let provinceHouseholds = 0;
+      let provincePopulation = 0;
+
+      provinceRows.forEach((row) => {
+        const regionLabel = getLocalizedRegionDisplayName(row.region);
+        const provinceLabel = getLocalizedProvinceDisplayName(row.province);
+        const communeLabel = getLocalizedCommuneDisplayName(row.commune, row.communeProps);
+
+        html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td><td class="comm">${escapeHtml(communeLabel)}</td><td class="num">${escapeHtml(formatIntegerForUi(row.moroccans))}</td><td class="num">${escapeHtml(formatIntegerForUi(row.foreigners))}</td><td class="num">${escapeHtml(formatIntegerForUi(row.households))}</td><td class="num">${escapeHtml(formatIntegerForUi(row.totalPopulation))}</td></tr>`;
+
+        provinceMoroccans += Number(row.moroccans) || 0;
+        provinceForeigners += Number(row.foreigners) || 0;
+        provinceHouseholds += Number(row.households) || 0;
+        provincePopulation += Number(row.totalPopulation) || 0;
+      });
+
+      const provinceLabel = getLocalizedProvinceDisplayName(provinceKey);
+      html += `<tr class="subtotal"><td colspan="3" class="subtotal-label"><strong>${escapeHtml(langText('مجموع', 'Total'))} ${escapeHtml(provinceLabel)}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(provinceMoroccans))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(provinceForeigners))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(provinceHouseholds))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(provincePopulation))}</strong></td></tr>`;
+
+      regionMoroccans += provinceMoroccans;
+      regionForeigners += provinceForeigners;
+      regionHouseholds += provinceHouseholds;
+      regionPopulation += provincePopulation;
+    });
+
+    const regionLabel = getLocalizedRegionDisplayName(regionKey);
+    html += `<tr class="region-subtotal"><td colspan="3" class="subtotal-label"><strong>${escapeHtml(langText('مجموع', 'Total'))} ${escapeHtml(regionLabel)}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(regionMoroccans))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(regionForeigners))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(regionHouseholds))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(regionPopulation))}</strong></td></tr>`;
+  });
+
+  html += '</tbody><tfoot>';
+  html += `<tr><td colspan="3" class="subtotal-label"><strong>${escapeHtml(langText('مجموع المغرب', 'Total Maroc'))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.moroccans))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.foreigners))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.households))}</strong></td><td class="num"><strong>${escapeHtml(formatIntegerForUi(RGPH2024_OFFICIAL_NATIONAL_POPULATION))}</strong></td></tr>`;
+  html += '</tfoot>';
+  html += '</table></div>';
+
+  container.innerHTML = html;
+  requestAnimationFrame(() => applyRgphDynamicColumnLayout(container));
 }
 
 function getSelectedPivotCategoriesFromUi(categories = []) {
@@ -4966,6 +5199,10 @@ function renderCurrentPivotView(selectedCategories) {
     renderCommuneStatsTable(agg, categories, reseaux, selectedCategories);
     return;
   }
+  if (currentPivotView === PIVOT_VIEW.POPULATION_2024) {
+    renderPopulationCensusStatsTable();
+    return;
+  }
 
   renderPivotTable(agg, categories, reseaux, selectedCategories);
 }
@@ -5019,6 +5256,10 @@ function getPivotRowSortValue(row, sortKey, view) {
   if (sortKey === 'province') return getLocalizedProvinceDisplayName(row.province);
   if (sortKey === 'commune') return getLocalizedCommuneDisplayName(row.commune, row.communeProps);
   if (sortKey === 'total') return Number(row.total) || 0;
+  if (sortKey === 'moroccans') return Number(row.moroccans) || 0;
+  if (sortKey === 'foreigners') return Number(row.foreigners) || 0;
+  if (sortKey === 'households') return Number(row.households) || 0;
+  if (sortKey === 'populationTotal') return Number(row.totalPopulation) || 0;
   if (sortKey.startsWith('field:')) {
     const fieldKey = sortKey.slice('field:'.length);
     return row?.values?.[fieldKey] ?? '';
@@ -5239,6 +5480,86 @@ function buildExportRows() {
       });
       rows.push(exportRow);
     });
+    return rows;
+  }
+
+  if (currentPivotView === PIVOT_VIEW.POPULATION_2024) {
+    const rowsData = buildPopulationCensusPivotRows();
+    const grouped = new Map();
+
+    rowsData.forEach((row) => {
+      if (!grouped.has(row.region)) grouped.set(row.region, new Map());
+      const byProvince = grouped.get(row.region);
+      if (!byProvince.has(row.province)) byProvince.set(row.province, []);
+      byProvince.get(row.province).push(row);
+    });
+
+    grouped.forEach((provinceMap, regionKey) => {
+      let regionMoroccans = 0;
+      let regionForeigners = 0;
+      let regionHouseholds = 0;
+      let regionPopulation = 0;
+
+      provinceMap.forEach((provinceRows, provinceKey) => {
+        let provinceMoroccans = 0;
+        let provinceForeigners = 0;
+        let provinceHouseholds = 0;
+        let provincePopulation = 0;
+
+        provinceRows.forEach((row) => {
+          rows.push({
+            'Région': row.region,
+            'Province': row.province,
+            'Commune': row.commune,
+            'Marocains': Math.round(Number(row.moroccans) || 0),
+            'Étrangers': Math.round(Number(row.foreigners) || 0),
+            'Ménages': Math.round(Number(row.households) || 0),
+            'Population totale': Math.round(Number(row.totalPopulation) || 0)
+          });
+
+          provinceMoroccans += Number(row.moroccans) || 0;
+          provinceForeigners += Number(row.foreigners) || 0;
+          provinceHouseholds += Number(row.households) || 0;
+          provincePopulation += Number(row.totalPopulation) || 0;
+        });
+
+        rows.push({
+          'Région': '',
+          'Province': `${langText('مجموع', 'Total')} ${provinceKey}`,
+          'Commune': '',
+          'Marocains': Math.round(provinceMoroccans),
+          'Étrangers': Math.round(provinceForeigners),
+          'Ménages': Math.round(provinceHouseholds),
+          'Population totale': Math.round(provincePopulation)
+        });
+
+        regionMoroccans += provinceMoroccans;
+        regionForeigners += provinceForeigners;
+        regionHouseholds += provinceHouseholds;
+        regionPopulation += provincePopulation;
+      });
+
+      rows.push({
+        'Région': `${langText('مجموع', 'Total')} ${regionKey}`,
+        'Province': '',
+        'Commune': '',
+        'Marocains': Math.round(regionMoroccans),
+        'Étrangers': Math.round(regionForeigners),
+        'Ménages': Math.round(regionHouseholds),
+        'Population totale': Math.round(regionPopulation)
+      });
+    });
+
+    rows.push({
+      'Région': langText('مجموع المغرب', 'Total Maroc'),
+      'Province': '',
+      'Commune': '',
+      'Marocains': Math.round(Number(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.moroccans) || 0),
+      'Étrangers': Math.round(Number(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.foreigners) || 0),
+      'Ménages': Math.round(Number(RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN.households) || 0),
+      'Population totale': Math.round(Number(RGPH2024_OFFICIAL_NATIONAL_POPULATION) || 0)
+    });
+
     return rows;
   }
 
@@ -5734,6 +6055,7 @@ function initUI() {
   document.getElementById('togglePivotBtn')?.addEventListener('click', () => togglePivotPanelByView(PIVOT_VIEW.HEALTH));
   document.getElementById('togglePivotProvinceBtn')?.addEventListener('click', () => togglePivotPanelByView(PIVOT_VIEW.PROVINCE));
   document.getElementById('togglePivotCommuneBtn')?.addEventListener('click', () => togglePivotPanelByView(PIVOT_VIEW.COMMUNE));
+  document.getElementById('togglePivotPopulationBtn')?.addEventListener('click', () => togglePivotPanelByView(PIVOT_VIEW.POPULATION_2024));
 
   document.getElementById('closePivot')?.addEventListener('click', closePivotPanel);
   document.getElementById('downloadCsvBtn')?.addEventListener('click', exportToCSV);
@@ -5758,6 +6080,12 @@ function initUI() {
   document.getElementById('themeToggleBtn')?.addEventListener('click', () => {
     toggleAppTheme();
   });
+
+  window.addEventListener('resize', () => {
+    if (currentPivotView === PIVOT_VIEW.POPULATION_2024) {
+      applyRgphDynamicColumnLayout(document.getElementById('pivotContent'));
+    }
+  });
 }
 
 /* ============ INITIALIZATION ============ */
@@ -5767,21 +6095,34 @@ async function initApp() {
   suppressUrlStateSync = true;
   initializeTheme();
   showLoadingOverlay(true);
+  setLoadingStatus(langText('بدء التحميل...', 'Démarrage du chargement...'), 5);
 
   try {
+    setLoadingStatus(langText('تهيئة الخريطة والواجهة...', 'Initialisation de la carte et de l’interface...'), 15);
     initMap();
     initSearch();
     initUI();
 
+    setLoadingStatus(langText('تحميل معجم الجماعات...', 'Chargement du mapping des communes...'), 35);
     await loadCommuneArabicMapping();
+    setLoadingStatus(langText('اكتمل تحميل معجم الجماعات', 'Mapping des communes chargé'), 50);
 
     // Load data in parallel
+    let doneSteps = 0;
+    const markStep = (stageAr, stageFr) => {
+      doneSteps += 1;
+      const pct = 50 + Math.round((doneSteps / 3) * 45);
+      setLoadingStatus(langText(stageAr, stageFr), pct);
+    };
+
+    setLoadingStatus(langText('تحميل ملفات البيانات...', 'Chargement des fichiers de données...'), 55);
     await Promise.all([
-      loadGeoJSONData('province.geojson', provincesLayer),
-      loadGeoJSONData('communes.geojson', communesLayer),
-      loadInstitutionsData()
+      loadGeoJSONData('province.geojson', provincesLayer).then(() => markStep('تم تحميل الأقاليم', 'Provinces chargées')),
+      loadGeoJSONData('communes.geojson', communesLayer).then(() => markStep('تم تحميل الجماعات', 'Communes chargées')),
+      loadInstitutionsData().then(() => markStep('تم تحميل المؤسسات', 'Établissements chargés'))
     ]);
 
+    setLoadingStatus(langText('اكتمل التحميل', 'Chargement terminé'), 100);
     applyRuntimeStateFromUrl(initialUrlState);
     suppressUrlStateSync = false;
     syncAppStateToUrl();
