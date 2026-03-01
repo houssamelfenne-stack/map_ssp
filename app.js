@@ -409,6 +409,11 @@ let reseauColors = Object.assign({}, COLORS);
 let showZeroRows = false;
 let lastPivotData = null;
 let currentPivotView = PIVOT_VIEW.HEALTH;
+let pivotSortStateByView = {
+  [PIVOT_VIEW.HEALTH]: { key: 'region', direction: 'asc' },
+  [PIVOT_VIEW.PROVINCE]: { key: 'region', direction: 'asc' },
+  [PIVOT_VIEW.COMMUNE]: { key: 'region', direction: 'asc' }
+};
 let searchDebounceTimer = null;
 let statsData = null;
 let provincesLayer = null;
@@ -442,6 +447,7 @@ let excelSelectedValueFieldByLevel = {
   province: 'value',
   commune: 'value'
 };
+let excelColoringTargetLevel = 'province';
 let communeArabicByIso = new Map();
 let communeArabicByNameKey = new Map();
 let excelUiSymbologyByLevel = {
@@ -899,12 +905,14 @@ function toggleAppLanguage() {
 
 function buildMarkerPopupHtml(item, reseau) {
   const reseauArabic = toArabicNetworkName(reseau);
+  const communeRaw = getResValue(item, ['commune', 'cs']) || '—';
+  const communeDisplay = getLocalizedCommuneDisplayName(communeRaw);
   return `
     <div class="popup-card">
       <div class="popup-title">${escapeHtml(getResValue(item, ['nom_etab', 'nom', 'key']) || langText('اسم مجهول', 'Établissement inconnu'))}</div>
       <div class="popup-row"><span>${langText('التصنيف', 'Catégorie')}</span><strong>${escapeHtml(getResValue(item, ['categorie', 'abr_categorie']) || '—')}</strong></div>
       <div class="popup-row"><span>${langText('الشبكة', 'Réseau')}</span><strong>${escapeHtml(langText(reseauArabic, reseau))}</strong></div>
-      <div class="popup-row"><span>${langText('الجماعة', t('popupCommune'))}</span><strong>${escapeHtml(getResValue(item, ['commune', 'cs']) || '—')}</strong></div>
+      <div class="popup-row"><span>${langText('الجماعة', t('popupCommune'))}</span><strong>${escapeHtml(communeDisplay)}</strong></div>
     </div>
   `;
 }
@@ -930,15 +938,7 @@ function rebuildAllPopups() {
   if (communesLayer) {
     communesLayer.eachLayer(l => {
       if (l.feature?.properties) {
-        const rawName = getResValue(l.feature.properties, ['NAME_2', 'NAME_1', 'NAME']) || t('unknown');
-        const displayName = toArabicCommuneName(rawName, l.feature.properties);
-        const popupDisplayName = langText(displayName, rawName);
-        l.setPopupContent(
-          `<div class="popup-card">`
-          + `<div class="popup-title">${escapeHtml(t('popupCommune'))}</div>`
-          + `<div class="popup-value">${escapeHtml(popupDisplayName)}</div>`
-          + `</div>`
-        );
+        l.setPopupContent(buildCommunePopup(l.feature.properties));
       }
     });
   }
@@ -1960,6 +1960,7 @@ function getActiveExcelTheme() {
 function clearExcelSymbologyTheme(showMessage = true) {
   excelSymbologyThemes = [];
   activeExcelThemeId = '';
+  excelColoringTargetLevel = 'province';
   excelValueFieldOptionsByLevel = {
     province: [{ key: 'value', label: 'value' }],
     commune: [{ key: 'value', label: 'value' }]
@@ -2203,6 +2204,7 @@ async function loadExcelSymbology(file) {
   const activeTheme = preferredTheme;
   const matchedProvinceFeatures = countMatchedLayerFeatures(activeTheme, 'province');
   const matchedCommuneFeatures = countMatchedLayerFeatures(activeTheme, 'commune');
+  excelColoringTargetLevel = matchedCommuneFeatures > matchedProvinceFeatures ? 'commune' : 'province';
   const provinceMissing = Math.max(0, totalProvinceValues - matchedProvinceFeatures);
   const communeMissing = Math.max(0, totalCommuneValues - matchedCommuneFeatures);
   showToast(
@@ -2620,7 +2622,8 @@ function updateProvinceLayerByFilters(shouldFitBounds = true) {
 
   const selectedBounds = L.latLngBounds([]);
   const activeTheme = getActiveExcelTheme();
-  const hasProvinceThemeValues = !!(activeTheme && activeTheme.values?.province?.size > 0);
+  const applyProvinceTheme = !!(activeTheme && getExcelColoringTargetLevel() === 'province');
+  const hasProvinceThemeValues = !!(applyProvinceTheme && activeTheme.values?.province?.size > 0);
 
   provincesLayer.eachLayer(layer => {
     const props = layer.feature?.properties || {};
@@ -2635,7 +2638,7 @@ function updateProvinceLayerByFilters(shouldFitBounds = true) {
     let fillColor = '#7dd3fc';
     let fillOpacity = matches ? 0.08 : 0.01;
 
-    if (activeTheme) {
+    if (applyProvinceTheme) {
       if (!hasProvinceThemeValues) {
         fillColor = activeTheme.noDataColor || '#e5e7eb';
         fillOpacity = matches ? 0.18 : 0.08;
@@ -2682,7 +2685,8 @@ function updateCommuneLayerByFilters() {
   const communeLabelsZoomReady = (map?.getZoom?.() || 0) >= COMMUNE_LABEL_MIN_ZOOM;
   const selectedProvinceCodes = currentProvinceFilter ? getProvinceCodesForFilter(currentProvinceFilter) : new Set();
   const activeTheme = getActiveExcelTheme();
-  const hasCommuneThemeValues = !!(activeTheme && activeTheme.values?.commune?.size > 0);
+  const applyCommuneTheme = !!(activeTheme && getExcelColoringTargetLevel() === 'commune');
+  const hasCommuneThemeValues = !!(applyCommuneTheme && activeTheme.values?.commune?.size > 0);
 
   communesLayer.eachLayer(layer => {
     const props = layer.feature?.properties || {};
@@ -2702,7 +2706,7 @@ function updateCommuneLayerByFilters() {
     let fillColor = '#bae6fd';
     let fillOpacity = matches ? 0.02 : 0;
 
-    if (activeTheme) {
+    if (applyCommuneTheme) {
       if (!hasCommuneThemeValues) {
         fillColor = activeTheme.noDataColor || '#e5e7eb';
         fillOpacity = matches ? 0.14 : 0.06;
@@ -2772,6 +2776,7 @@ function applyGeographicFilters({ region, province, commune, fitBounds = true } 
   applyReseauFilter();
   updateProvinceLayerByFilters(fitBounds);
   updateCommuneLayerByFilters();
+  rebuildAllPopups();
   if (typeof createPivot === 'function') {
     createPivot(getFilteredInstitutions());
   }
@@ -2862,6 +2867,44 @@ function buildProvincePopup(props) {
   html += `<div class="popup-value">${escapeHtml(langText(toArabicProvinceName(name), name))}</div>`;
   if (region) html += `<div class="popup-row"><span>${escapeHtml(t('popupRegion'))}</span><strong>${escapeHtml(langText(toArabicRegionName(region), region))}</strong></div>`;
   if (code) html += `<div class="popup-row"><span>${escapeHtml(t('popupCode'))}</span><strong>${escapeHtml(code)}</strong></div>`;
+  html += buildPolygonColoringPopupRows('province', props);
+  html += `</div>`;
+  return html;
+}
+
+function buildPolygonColoringPopupRows(level, props = {}) {
+  const activeTheme = getActiveExcelTheme();
+
+  const popupLevel = level === 'commune' ? 'commune' : 'province';
+  const targetLevel = getExcelColoringTargetLevel();
+  const targetLevelLabel = targetLevel === 'province'
+    ? langText('الأقاليم/العمالات', 'Provinces/préfectures')
+    : langText('الجماعات', 'Communes');
+  const selectedFieldLabel = getExcelSelectedValueFieldLabel(targetLevel);
+  const isActiveForPopup = popupLevel === targetLevel;
+
+  let valueDisplay = langText('— غير مفعل لهذا المستوى', '— Inactif pour ce niveau');
+  if (activeTheme && isActiveForPopup) {
+    const value = getThemeValueForFeature(activeTheme, targetLevel, props).value;
+    valueDisplay = formatFieldValueForDisplay(value, selectedFieldLabel);
+  }
+
+  let html = '';
+  html += `<div class="popup-row"><span>${escapeHtml(langText('مستوى التلوين', 'Niveau de coloration'))}</span><strong>${escapeHtml(targetLevelLabel)}</strong></div>`;
+  html += `<div class="popup-row"><span>${escapeHtml(langText('حقل القيمة', 'Champ de valeur'))}</span><strong>${escapeHtml(selectedFieldLabel)}</strong></div>`;
+  html += `<div class="popup-row"><span>${escapeHtml(langText('القيمة', 'Valeur'))}</span><strong>${escapeHtml(valueDisplay)}</strong></div>`;
+  return html;
+}
+
+function buildCommunePopup(props) {
+  const rawName = getResValue(props, ['NAME_2', 'NAME_1', 'NAME']) || t('unknown');
+  const displayName = toArabicCommuneName(rawName, props || {});
+  const popupDisplayName = langText(displayName, rawName);
+
+  let html = `<div class="popup-card">`;
+  html += `<div class="popup-title">${escapeHtml(t('popupCommune'))}</div>`;
+  html += `<div class="popup-value">${escapeHtml(popupDisplayName)}</div>`;
+  html += buildPolygonColoringPopupRows('commune', props);
   html += `</div>`;
   return html;
 }
@@ -3231,14 +3274,9 @@ function createCommuneLayer() {
   const layer = L.geoJSON(null, {
     style: { color: defaultStroke.color, weight: defaultStroke.weight, fillOpacity: 0.01 },
     onEachFeature: (f, l) => {
+      const popupHtml = buildCommunePopup(f?.properties || {});
       const rawName = getResValue(f.properties, ['NAME_2', 'NAME_1', 'NAME']) || t('unknown');
       const displayName = toArabicCommuneName(rawName, f?.properties || {});
-      const popupDisplayName = langText(displayName, rawName);
-      const popupHtml =
-        `<div class="popup-card">`
-        + `<div class="popup-title">${escapeHtml(t('popupCommune'))}</div>`
-        + `<div class="popup-value">${escapeHtml(popupDisplayName)}</div>`
-        + `</div>`;
       bindSmartAreaPopup(l, popupHtml);
       
       // Add commune name label in the center
@@ -3426,14 +3464,15 @@ function updateLegend() {
   const excelUploadAria = isFrenchLanguage() ? 'Charger un fichier Excel de coloration' : 'تحميل ملف Excel للتلوين';
   const themeSelectAria = isFrenchLanguage() ? 'Choisir un thème' : 'اختيار الموضوع';
   const noThemeLabel = isFrenchLanguage() ? 'Sans thème' : 'بدون موضوع';
-  const provinceColorValueTitle = isFrenchLanguage() ? 'Valeur de coloration des provinces/préfectures' : 'قيمة تلوين الأقاليم/العمالات';
-  const provinceColorModeTitle = isFrenchLanguage() ? 'Mode de coloration des provinces/préfectures' : 'نمط تلوين الأقاليم/العمالات';
-  const communeColorModeTitle = isFrenchLanguage() ? 'Mode de coloration des communes' : 'نمط تلوين الجماعات';
+  const coloringTargetTitle = isFrenchLanguage() ? 'Niveau de coloration' : 'مستوى التلوين';
+  const coloringTargetProvinceLabel = isFrenchLanguage() ? 'Provinces/préfectures' : 'الأقاليم/العمالات';
+  const coloringTargetCommuneLabel = isFrenchLanguage() ? 'Communes' : 'الجماعات';
+  const colorValueTitle = isFrenchLanguage() ? 'Champ de valeur de coloration' : 'حقل قيمة التلوين';
+  const colorModeTitle = isFrenchLanguage() ? 'Mode de coloration' : 'نمط التلوين';
   const uniqueColorLabel = isFrenchLanguage() ? 'Couleur unique' : 'لون موحد';
   const minColorLabel = isFrenchLanguage() ? 'Couleur valeur minimale' : 'لون أصغر قيمة';
   const maxColorLabel = isFrenchLanguage() ? 'Couleur valeur maximale' : 'لون أكبر قيمة';
-  const noProvinceCategories = isFrenchLanguage() ? 'Aucune catégorie province après chargement' : 'لا توجد فئات للأقاليم بعد التحميل';
-  const noCommuneCategories = isFrenchLanguage() ? 'Aucune catégorie commune après chargement' : 'لا توجد فئات للجماعات بعد التحميل';
+  const noCategoriesForLevel = isFrenchLanguage() ? 'Aucune catégorie après chargement' : 'لا توجد فئات بعد التحميل';
   const disableExcelColoring = isFrenchLanguage() ? 'Désactiver la coloration Excel' : 'تعطيل تلوين Excel';
   const statusLabel = isFrenchLanguage() ? 'Statut' : 'الحالة';
   const enabledLabel = isFrenchLanguage() ? 'Activé' : 'مفعل';
@@ -3473,20 +3512,21 @@ function updateLegend() {
   const selectedProvinceLabel = currentProvinceFilter ? toArabicProvinceName(currentProvinceFilter) : allProvincesLabel;
   const selectedCommuneLabel = currentCommuneFilter ? toArabicCommuneName(currentCommuneFilter) : allCommunesLabel;
   const activeTheme = getActiveExcelTheme();
-  const provinceSymbology = getUiSymbologyForLevel('province');
-  const communeSymbology = getUiSymbologyForLevel('commune');
-  const provinceMinValue = Number.isFinite(provinceSymbology.minValue) ? provinceSymbology.minValue : '';
-  const provinceMidValue = Number.isFinite(provinceSymbology.midValue) ? provinceSymbology.midValue : '';
-  const provinceMaxValue = Number.isFinite(provinceSymbology.maxValue) ? provinceSymbology.maxValue : '';
-  const communeMinValue = Number.isFinite(communeSymbology.minValue) ? communeSymbology.minValue : '';
-  const communeMidValue = Number.isFinite(communeSymbology.midValue) ? communeSymbology.midValue : '';
-  const communeMaxValue = Number.isFinite(communeSymbology.maxValue) ? communeSymbology.maxValue : '';
-  const provinceCategories = activeTheme ? getThemeDistinctCategories(activeTheme, 'province') : [];
-  const activeCommuneCategories = activeTheme ? getThemeDistinctCategories(activeTheme, 'commune') : [];
-  const mergedCommuneCategories = activeTheme ? getDistinctCategoriesAcrossThemes('commune') : [];
-  const communeCategories = mergedCommuneCategories.length > activeCommuneCategories.length
-    ? mergedCommuneCategories
-    : activeCommuneCategories;
+  const coloringTargetLevel = getExcelColoringTargetLevel();
+  const coloringTargetLabel = coloringTargetLevel === 'province' ? coloringTargetProvinceLabel : coloringTargetCommuneLabel;
+  const targetSymbology = getUiSymbologyForLevel(coloringTargetLevel);
+  const targetMinValue = Number.isFinite(targetSymbology.minValue) ? targetSymbology.minValue : '';
+  const targetMidValue = Number.isFinite(targetSymbology.midValue) ? targetSymbology.midValue : '';
+  const targetMaxValue = Number.isFinite(targetSymbology.maxValue) ? targetSymbology.maxValue : '';
+  const targetFieldOptions = excelValueFieldOptionsByLevel[coloringTargetLevel] || [];
+  const targetSelectedValueField = excelSelectedValueFieldByLevel[coloringTargetLevel] || 'value';
+  const targetActiveCategories = activeTheme ? getThemeDistinctCategories(activeTheme, coloringTargetLevel) : [];
+  const targetMergedCategories = activeTheme && coloringTargetLevel === 'commune'
+    ? getDistinctCategoriesAcrossThemes('commune')
+    : [];
+  const targetCategories = targetMergedCategories.length > targetActiveCategories.length
+    ? targetMergedCategories
+    : targetActiveCategories;
 
   html += '<div class="legend-geo-filter">';
   html += `<div class="legend-geo-title"><i class="fas fa-filter"></i> ${escapeHtml(geoFilterTitle)}</div>`;
@@ -3538,64 +3578,47 @@ function updateLegend() {
   });
   html += '</select>';
 
-  html += `<div class="legend-geo-title"><i class="fas fa-sliders"></i> ${escapeHtml(provinceColorValueTitle)}</div>`;
-  html += `<select id="excelValueFieldProvince" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
-  excelValueFieldOptionsByLevel.province.forEach((fieldOption) => {
-    const selected = excelSelectedValueFieldByLevel.province === fieldOption.key ? 'selected' : '';
+  html += `<div class="legend-geo-title"><i class="fas fa-draw-polygon"></i> ${escapeHtml(coloringTargetTitle)}</div>`;
+  html += `<select id="excelColoringTarget" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
+  html += `<option value="province" ${coloringTargetLevel === 'province' ? 'selected' : ''}>${escapeHtml(coloringTargetProvinceLabel)}</option>`;
+  html += `<option value="commune" ${coloringTargetLevel === 'commune' ? 'selected' : ''}>${escapeHtml(coloringTargetCommuneLabel)}</option>`;
+  html += '</select>';
+
+  html += `<div class="legend-geo-title"><i class="fas fa-sliders"></i> ${escapeHtml(colorValueTitle)} (${escapeHtml(coloringTargetLabel)})</div>`;
+  html += `<select id="excelValueFieldTarget" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
+  targetFieldOptions.forEach((fieldOption) => {
+    const selected = targetSelectedValueField === fieldOption.key ? 'selected' : '';
     html += `<option value="${escapeHtml(fieldOption.key)}" ${selected}>${escapeHtml(fieldOption.label)}</option>`;
   });
   html += '</select>';
 
-  html += `<div class="legend-geo-title"><i class="fas fa-layer-group"></i> ${escapeHtml(provinceColorModeTitle)}</div>`;
-  html += `<select id="excelModeProvince" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
-  html += `<option value="unique" ${provinceSymbology.mode === 'unique' ? 'selected' : ''}>${escapeHtml(uniqueModeLabel)}</option>`;
-  html += `<option value="categorized" ${provinceSymbology.mode === 'categorized' ? 'selected' : ''}>${escapeHtml(categorizedModeLabel)}</option>`;
-  html += `<option value="graduated" ${provinceSymbology.mode === 'graduated' ? 'selected' : ''}>${escapeHtml(graduatedModeLabel)}</option>`;
+  html += `<div class="legend-geo-title"><i class="fas fa-layer-group"></i> ${escapeHtml(colorModeTitle)} (${escapeHtml(coloringTargetLabel)})</div>`;
+  html += `<select id="excelModeTarget" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
+  html += `<option value="unique" ${targetSymbology.mode === 'unique' ? 'selected' : ''}>${escapeHtml(uniqueModeLabel)}</option>`;
+  html += `<option value="categorized" ${targetSymbology.mode === 'categorized' ? 'selected' : ''}>${escapeHtml(categorizedModeLabel)}</option>`;
+  html += `<option value="graduated" ${targetSymbology.mode === 'graduated' ? 'selected' : ''}>${escapeHtml(graduatedModeLabel)}</option>`;
   html += '</select>';
-  if (provinceSymbology.mode === 'unique') {
-    html += `<div class="legend-geo-info"><span>${escapeHtml(uniqueColorLabel)}</span><span><input type="color" id="excelUniqueColorProvince" value="${escapeHtml(normalizeHexColor(provinceSymbology.uniqueColor, '#0ea5e9'))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
-  } else if (provinceSymbology.mode === 'graduated') {
-    html += `<div class="legend-geo-info"><span>${escapeHtml(minColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMinColorProvince" value="${escapeHtml(normalizeHexColor(provinceSymbology.minColor, '#dbeafe'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMinValueProvince" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(provinceMinValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMinValueProvinceAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
-    html += `<div class="legend-geo-info"><span>${escapeHtml(midColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMidColorProvince" value="${escapeHtml(normalizeHexColor(provinceSymbology.midColor, '#60a5fa'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMidValueProvince" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(provinceMidValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMidValueProvinceAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
-    html += `<div class="legend-geo-info"><span>${escapeHtml(maxColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMaxColorProvince" value="${escapeHtml(normalizeHexColor(provinceSymbology.maxColor, '#1d4ed8'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMaxValueProvince" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(provinceMaxValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMaxValueProvinceAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
+  if (targetSymbology.mode === 'unique') {
+    const defaultUniqueColor = coloringTargetLevel === 'province' ? '#0ea5e9' : '#22c55e';
+    html += `<div class="legend-geo-info"><span>${escapeHtml(uniqueColorLabel)}</span><span><input type="color" id="excelUniqueColorTarget" value="${escapeHtml(normalizeHexColor(targetSymbology.uniqueColor, defaultUniqueColor))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
+  } else if (targetSymbology.mode === 'graduated') {
+    const defaultMinColor = coloringTargetLevel === 'province' ? '#dbeafe' : '#dcfce7';
+    const defaultMidColor = coloringTargetLevel === 'province' ? '#60a5fa' : '#4ade80';
+    const defaultMaxColor = coloringTargetLevel === 'province' ? '#1d4ed8' : '#15803d';
+    html += `<div class="legend-geo-info"><span>${escapeHtml(minColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMinColorTarget" value="${escapeHtml(normalizeHexColor(targetSymbology.minColor, defaultMinColor))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMinValueTarget" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(targetMinValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMinValueTargetAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
+    html += `<div class="legend-geo-info"><span>${escapeHtml(midColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMidColorTarget" value="${escapeHtml(normalizeHexColor(targetSymbology.midColor, defaultMidColor))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMidValueTarget" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(targetMidValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMidValueTargetAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
+    html += `<div class="legend-geo-info"><span>${escapeHtml(maxColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMaxColorTarget" value="${escapeHtml(normalizeHexColor(targetSymbology.maxColor, defaultMaxColor))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMaxValueTarget" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(targetMaxValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMaxValueTargetAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
   } else {
-    if (provinceCategories.length) {
-      provinceCategories.forEach((category, index) => {
-        const categoryColor = provinceSymbology.categoryColors.get(category) || interpolateColor(provinceSymbology.minColor, provinceSymbology.maxColor, index / Math.max(1, provinceCategories.length - 1));
-        html += `<div class="legend-geo-info"><span>${escapeHtml(category)}</span><span><input type="color" class="excel-category-color" data-level="province" data-category="${escapeHtml(category)}" value="${escapeHtml(normalizeHexColor(categoryColor, '#0ea5e9'))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
+    if (targetCategories.length) {
+      targetCategories.forEach((category, index) => {
+        const defaultMinColor = coloringTargetLevel === 'province' ? '#dbeafe' : '#dcfce7';
+        const defaultMaxColor = coloringTargetLevel === 'province' ? '#1d4ed8' : '#15803d';
+        const categoryColor = targetSymbology.categoryColors.get(category)
+          || interpolateColor(targetSymbology.minColor || defaultMinColor, targetSymbology.maxColor || defaultMaxColor, index / Math.max(1, targetCategories.length - 1));
+        html += `<div class="legend-geo-info"><span>${escapeHtml(category)}</span><span><input type="color" class="excel-category-color" data-level="${escapeHtml(coloringTargetLevel)}" data-category="${escapeHtml(category)}" value="${escapeHtml(normalizeHexColor(categoryColor, coloringTargetLevel === 'province' ? '#0ea5e9' : '#22c55e'))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
       });
     } else {
-      html += `<div class="legend-geo-info"><span>${escapeHtml(noProvinceCategories)}</span></div>`;
-    }
-  }
-
-  html += `<div class="legend-geo-title"><i class="fas fa-draw-polygon"></i> ${escapeHtml(communeColorModeTitle)}</div>`;
-  html += `<select id="excelValueFieldCommune" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
-  excelValueFieldOptionsByLevel.commune.forEach((fieldOption) => {
-    const selected = excelSelectedValueFieldByLevel.commune === fieldOption.key ? 'selected' : '';
-    html += `<option value="${escapeHtml(fieldOption.key)}" ${selected}>${escapeHtml(fieldOption.label)}</option>`;
-  });
-  html += '</select>';
-
-  html += `<select id="excelModeCommune" class="legend-geo-select" ${activeTheme ? '' : 'disabled'}>`;
-  html += `<option value="unique" ${communeSymbology.mode === 'unique' ? 'selected' : ''}>${escapeHtml(uniqueModeLabel)}</option>`;
-  html += `<option value="categorized" ${communeSymbology.mode === 'categorized' ? 'selected' : ''}>${escapeHtml(categorizedModeLabel)}</option>`;
-  html += `<option value="graduated" ${communeSymbology.mode === 'graduated' ? 'selected' : ''}>${escapeHtml(graduatedModeLabel)}</option>`;
-  html += '</select>';
-  if (communeSymbology.mode === 'unique') {
-    html += `<div class="legend-geo-info"><span>${escapeHtml(uniqueColorLabel)}</span><span><input type="color" id="excelUniqueColorCommune" value="${escapeHtml(normalizeHexColor(communeSymbology.uniqueColor, '#22c55e'))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
-  } else if (communeSymbology.mode === 'graduated') {
-    html += `<div class="legend-geo-info"><span>${escapeHtml(minColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMinColorCommune" value="${escapeHtml(normalizeHexColor(communeSymbology.minColor, '#dcfce7'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMinValueCommune" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(communeMinValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMinValueCommuneAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
-    html += `<div class="legend-geo-info"><span>${escapeHtml(midColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMidColorCommune" value="${escapeHtml(normalizeHexColor(communeSymbology.midColor, '#4ade80'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMidValueCommune" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(communeMidValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMidValueCommuneAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
-    html += `<div class="legend-geo-info"><span>${escapeHtml(maxColorLabel)}</span><span class="legend-color-value-wrap"><input type="color" id="excelMaxColorCommune" value="${escapeHtml(normalizeHexColor(communeSymbology.maxColor, '#15803d'))}" ${activeTheme ? '' : 'disabled'}><input type="number" id="excelMaxValueCommune" class="legend-geo-value-input" placeholder="${escapeHtml(valueLabel)}" value="${escapeHtml(String(communeMaxValue))}" ${activeTheme ? '' : 'disabled'}><button type="button" id="excelMaxValueCommuneAuto" class="legend-geo-mini-btn" ${activeTheme ? '' : 'disabled'}>${escapeHtml(autoValueLabel)}</button></span></div>`;
-  } else {
-    if (communeCategories.length) {
-      communeCategories.forEach((category, index) => {
-        const categoryColor = communeSymbology.categoryColors.get(category) || interpolateColor(communeSymbology.minColor, communeSymbology.maxColor, index / Math.max(1, communeCategories.length - 1));
-        html += `<div class="legend-geo-info"><span>${escapeHtml(category)}</span><span><input type="color" class="excel-category-color" data-level="commune" data-category="${escapeHtml(category)}" value="${escapeHtml(normalizeHexColor(categoryColor, '#22c55e'))}" ${activeTheme ? '' : 'disabled'}></span></div>`;
-      });
-    } else {
-      html += `<div class="legend-geo-info"><span>${escapeHtml(noCommuneCategories)}</span></div>`;
+      html += `<div class="legend-geo-info"><span>${escapeHtml(noCategoriesForLevel)}</span></div>`;
     }
   }
 
@@ -3738,30 +3761,19 @@ function updateLegend() {
   const legendResetGeoFilter = document.getElementById('legendResetGeoFilter');
   const excelSymbologyFile = document.getElementById('excelSymbologyFile');
   const excelThemeSelect = document.getElementById('excelThemeSelect');
-  const excelValueFieldProvince = document.getElementById('excelValueFieldProvince');
-  const excelValueFieldCommune = document.getElementById('excelValueFieldCommune');
-  const excelModeProvince = document.getElementById('excelModeProvince');
-  const excelModeCommune = document.getElementById('excelModeCommune');
-  const excelUniqueColorProvince = document.getElementById('excelUniqueColorProvince');
-  const excelUniqueColorCommune = document.getElementById('excelUniqueColorCommune');
-  const excelMinColorProvince = document.getElementById('excelMinColorProvince');
-  const excelMidColorProvince = document.getElementById('excelMidColorProvince');
-  const excelMaxColorProvince = document.getElementById('excelMaxColorProvince');
-  const excelMinValueProvince = document.getElementById('excelMinValueProvince');
-  const excelMidValueProvince = document.getElementById('excelMidValueProvince');
-  const excelMaxValueProvince = document.getElementById('excelMaxValueProvince');
-  const excelMinValueProvinceAuto = document.getElementById('excelMinValueProvinceAuto');
-  const excelMidValueProvinceAuto = document.getElementById('excelMidValueProvinceAuto');
-  const excelMaxValueProvinceAuto = document.getElementById('excelMaxValueProvinceAuto');
-  const excelMinColorCommune = document.getElementById('excelMinColorCommune');
-  const excelMidColorCommune = document.getElementById('excelMidColorCommune');
-  const excelMaxColorCommune = document.getElementById('excelMaxColorCommune');
-  const excelMinValueCommune = document.getElementById('excelMinValueCommune');
-  const excelMidValueCommune = document.getElementById('excelMidValueCommune');
-  const excelMaxValueCommune = document.getElementById('excelMaxValueCommune');
-  const excelMinValueCommuneAuto = document.getElementById('excelMinValueCommuneAuto');
-  const excelMidValueCommuneAuto = document.getElementById('excelMidValueCommuneAuto');
-  const excelMaxValueCommuneAuto = document.getElementById('excelMaxValueCommuneAuto');
+  const excelColoringTarget = document.getElementById('excelColoringTarget');
+  const excelValueFieldTarget = document.getElementById('excelValueFieldTarget');
+  const excelModeTarget = document.getElementById('excelModeTarget');
+  const excelUniqueColorTarget = document.getElementById('excelUniqueColorTarget');
+  const excelMinColorTarget = document.getElementById('excelMinColorTarget');
+  const excelMidColorTarget = document.getElementById('excelMidColorTarget');
+  const excelMaxColorTarget = document.getElementById('excelMaxColorTarget');
+  const excelMinValueTarget = document.getElementById('excelMinValueTarget');
+  const excelMidValueTarget = document.getElementById('excelMidValueTarget');
+  const excelMaxValueTarget = document.getElementById('excelMaxValueTarget');
+  const excelMinValueTargetAuto = document.getElementById('excelMinValueTargetAuto');
+  const excelMidValueTargetAuto = document.getElementById('excelMidValueTargetAuto');
+  const excelMaxValueTargetAuto = document.getElementById('excelMaxValueTargetAuto');
   const clearExcelSymbologyBtn = document.getElementById('clearExcelSymbologyBtn');
 
   legendRegionFilter?.addEventListener('change', (e) => {
@@ -3805,6 +3817,12 @@ function updateLegend() {
     updateLegend();
   });
 
+  excelColoringTarget?.addEventListener('change', (e) => {
+    excelColoringTargetLevel = normalizeExcelColoringTargetLevel(e.target.value || 'province');
+    applyGeographicFilters({ fitBounds: false });
+    updateLegend();
+  });
+
   const updateValueFieldForLevel = (level, fieldKey) => {
     const targetLevel = level === 'province' ? 'province' : 'commune';
     const options = excelValueFieldOptionsByLevel[targetLevel] || [];
@@ -3819,12 +3837,8 @@ function updateLegend() {
     updateLegend();
   };
 
-  excelValueFieldProvince?.addEventListener('change', (e) => {
-    updateValueFieldForLevel('province', e.target.value || 'value');
-  });
-
-  excelValueFieldCommune?.addEventListener('change', (e) => {
-    updateValueFieldForLevel('commune', e.target.value || 'value');
+  excelValueFieldTarget?.addEventListener('change', (e) => {
+    updateValueFieldForLevel(getExcelColoringTargetLevel(), e.target.value || 'value');
   });
 
   const updateModeForLevel = (level, mode) => {
@@ -3838,70 +3852,39 @@ function updateLegend() {
     updateLegend();
   };
 
-  excelModeProvince?.addEventListener('change', (e) => {
-    updateModeForLevel('province', e.target.value || 'graduated');
+  excelModeTarget?.addEventListener('change', (e) => {
+    updateModeForLevel(getExcelColoringTargetLevel(), e.target.value || 'graduated');
   });
 
-  excelModeCommune?.addEventListener('change', (e) => {
-    updateModeForLevel('commune', e.target.value || 'graduated');
-  });
-
-  excelUniqueColorProvince?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('province').uniqueColor = normalizeHexColor(e.target.value, '#0ea5e9');
+  excelUniqueColorTarget?.addEventListener('change', (e) => {
+    const level = getExcelColoringTargetLevel();
+    const defaultColor = level === 'province' ? '#0ea5e9' : '#22c55e';
+    getUiSymbologyForLevel(level).uniqueColor = normalizeHexColor(e.target.value, defaultColor);
     applyGeographicFilters({ fitBounds: false });
   });
 
-  excelUniqueColorCommune?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('commune').uniqueColor = normalizeHexColor(e.target.value, '#22c55e');
-    applyGeographicFilters({ fitBounds: false });
-  });
-
-  excelMinColorProvince?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('province').minColor = normalizeHexColor(e.target.value, '#dbeafe');
+  const updateColorForTargetLevel = (colorKey, colorValue) => {
+    const level = getExcelColoringTargetLevel();
+    const defaults = level === 'province'
+      ? { uniqueColor: '#0ea5e9', minColor: '#dbeafe', midColor: '#60a5fa', maxColor: '#1d4ed8' }
+      : { uniqueColor: '#22c55e', minColor: '#dcfce7', midColor: '#4ade80', maxColor: '#15803d' };
+    getUiSymbologyForLevel(level)[colorKey] = normalizeHexColor(colorValue, defaults[colorKey]);
     const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('province').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'province');
+    if (theme && getUiSymbologyForLevel(level).mode === 'categorized') ensureCategoryColorsForLevel(theme, level);
     applyGeographicFilters({ fitBounds: false });
     updateLegend();
+  };
+
+  excelMinColorTarget?.addEventListener('change', (e) => {
+    updateColorForTargetLevel('minColor', e.target.value);
   });
 
-  excelMidColorProvince?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('province').midColor = normalizeHexColor(e.target.value, '#60a5fa');
-    const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('province').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'province');
-    applyGeographicFilters({ fitBounds: false });
-    updateLegend();
+  excelMidColorTarget?.addEventListener('change', (e) => {
+    updateColorForTargetLevel('midColor', e.target.value);
   });
 
-  excelMaxColorProvince?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('province').maxColor = normalizeHexColor(e.target.value, '#1d4ed8');
-    const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('province').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'province');
-    applyGeographicFilters({ fitBounds: false });
-    updateLegend();
-  });
-
-  excelMinColorCommune?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('commune').minColor = normalizeHexColor(e.target.value, '#dcfce7');
-    const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('commune').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'commune');
-    applyGeographicFilters({ fitBounds: false });
-    updateLegend();
-  });
-
-  excelMidColorCommune?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('commune').midColor = normalizeHexColor(e.target.value, '#4ade80');
-    const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('commune').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'commune');
-    applyGeographicFilters({ fitBounds: false });
-    updateLegend();
-  });
-
-  excelMaxColorCommune?.addEventListener('change', (e) => {
-    getUiSymbologyForLevel('commune').maxColor = normalizeHexColor(e.target.value, '#15803d');
-    const theme = getActiveExcelTheme();
-    if (theme && getUiSymbologyForLevel('commune').mode === 'categorized') ensureCategoryColorsForLevel(theme, 'commune');
-    applyGeographicFilters({ fitBounds: false });
-    updateLegend();
+  excelMaxColorTarget?.addEventListener('change', (e) => {
+    updateColorForTargetLevel('maxColor', e.target.value);
   });
 
   const updateGraduatedValueForLevel = (level, key, rawValue) => {
@@ -3917,28 +3900,16 @@ function updateLegend() {
     updateLegend();
   };
 
-  excelMinValueProvince?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('province', 'minValue', e.target.value);
+  excelMinValueTarget?.addEventListener('change', (e) => {
+    updateGraduatedValueForLevel(getExcelColoringTargetLevel(), 'minValue', e.target.value);
   });
 
-  excelMidValueProvince?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('province', 'midValue', e.target.value);
+  excelMidValueTarget?.addEventListener('change', (e) => {
+    updateGraduatedValueForLevel(getExcelColoringTargetLevel(), 'midValue', e.target.value);
   });
 
-  excelMaxValueProvince?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('province', 'maxValue', e.target.value);
-  });
-
-  excelMinValueCommune?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('commune', 'minValue', e.target.value);
-  });
-
-  excelMidValueCommune?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('commune', 'midValue', e.target.value);
-  });
-
-  excelMaxValueCommune?.addEventListener('change', (e) => {
-    updateGraduatedValueForLevel('commune', 'maxValue', e.target.value);
+  excelMaxValueTarget?.addEventListener('change', (e) => {
+    updateGraduatedValueForLevel(getExcelColoringTargetLevel(), 'maxValue', e.target.value);
   });
 
   const resetGraduatedValueForLevel = (level, key) => {
@@ -3948,28 +3919,16 @@ function updateLegend() {
     updateLegend();
   };
 
-  excelMinValueProvinceAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('province', 'minValue');
+  excelMinValueTargetAuto?.addEventListener('click', () => {
+    resetGraduatedValueForLevel(getExcelColoringTargetLevel(), 'minValue');
   });
 
-  excelMidValueProvinceAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('province', 'midValue');
+  excelMidValueTargetAuto?.addEventListener('click', () => {
+    resetGraduatedValueForLevel(getExcelColoringTargetLevel(), 'midValue');
   });
 
-  excelMaxValueProvinceAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('province', 'maxValue');
-  });
-
-  excelMinValueCommuneAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('commune', 'minValue');
-  });
-
-  excelMidValueCommuneAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('commune', 'midValue');
-  });
-
-  excelMaxValueCommuneAuto?.addEventListener('click', () => {
-    resetGraduatedValueForLevel('commune', 'maxValue');
+  excelMaxValueTargetAuto?.addEventListener('click', () => {
+    resetGraduatedValueForLevel(getExcelColoringTargetLevel(), 'maxValue');
   });
 
   div.querySelectorAll('.excel-category-color').forEach((input) => {
@@ -4680,6 +4639,14 @@ function getExcelSelectedValueFieldLabel(level) {
   return normalizeTextValue(found?.label || selectedKey || 'value');
 }
 
+function normalizeExcelColoringTargetLevel(level) {
+  return level === 'commune' ? 'commune' : 'province';
+}
+
+function getExcelColoringTargetLevel() {
+  return normalizeExcelColoringTargetLevel(excelColoringTargetLevel);
+}
+
 function getExcelFilledFieldOptions(level) {
   const targetLevel = level === 'province' ? 'province' : 'commune';
   const activeTheme = getActiveExcelTheme();
@@ -4860,7 +4827,7 @@ function buildExcelPivotRows(level, fieldOptions = []) {
     });
 
     if (!showZeroRows && !hasAnyValue) return;
-    rows.push({ region, province, commune, values });
+    rows.push({ region, province, commune, communeProps: props, values });
   });
 
   rows.sort((a, b) => (
@@ -4904,15 +4871,19 @@ function renderProvinceStatsTable(agg, categories, reseaux, selectedCategories) 
     return;
   }
 
+  const sortedRows = sortPivotRows(rows, PIVOT_VIEW.PROVINCE);
+
   let html = '';
   html += '<div class="pivot-table-wrap"><table class="pivot-table">';
-  html += '<thead><tr><th>Région</th><th>Province</th>';
+  html += '<thead><tr>';
+  html += buildPivotSortableHeader(langText('الجهة', 'Région'), 'region', PIVOT_VIEW.PROVINCE);
+  html += buildPivotSortableHeader(langText('الإقليم', 'Province'), 'province', PIVOT_VIEW.PROVINCE);
   fieldOptions.forEach((fieldOption) => {
-    html += `<th>${escapeHtml(fieldOption.label)}</th>`;
+    html += buildPivotSortableHeader(fieldOption.label, `field:${fieldOption.key}`, PIVOT_VIEW.PROVINCE);
   });
   html += '</tr></thead><tbody>';
 
-  rows.forEach((row) => {
+  sortedRows.forEach((row) => {
     const regionLabel = getLocalizedRegionDisplayName(row.region);
     const provinceLabel = getLocalizedProvinceDisplayName(row.province);
     html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td>`;
@@ -4929,6 +4900,7 @@ function renderProvinceStatsTable(agg, categories, reseaux, selectedCategories) 
   html += '</table></div>';
 
   container.innerHTML = html;
+  attachPivotSortEventListeners(container);
 }
 
 function renderCommuneStatsTable(agg, categories, reseaux, selectedCategories) {
@@ -4945,18 +4917,23 @@ function renderCommuneStatsTable(agg, categories, reseaux, selectedCategories) {
     return;
   }
 
+  const sortedRows = sortPivotRows(rows, PIVOT_VIEW.COMMUNE);
+
   let html = '';
-  html += '<div class="pivot-table-wrap"><table class="pivot-table">';
-  html += '<thead><tr><th>Région</th><th>Province</th><th>Commune</th>';
+  html += '<div class="pivot-table-wrap commune-stats-wrap"><table class="pivot-table pivot-table-commune">';
+  html += '<thead><tr>';
+  html += buildPivotSortableHeader(langText('الجهة', 'Région'), 'region', PIVOT_VIEW.COMMUNE);
+  html += buildPivotSortableHeader(langText('الإقليم', 'Province'), 'province', PIVOT_VIEW.COMMUNE);
+  html += buildPivotSortableHeader(langText('الجماعة', 'Commune'), 'commune', PIVOT_VIEW.COMMUNE);
   fieldOptions.forEach((fieldOption) => {
-    html += `<th>${escapeHtml(fieldOption.label)}</th>`;
+    html += buildPivotSortableHeader(fieldOption.label, `field:${fieldOption.key}`, PIVOT_VIEW.COMMUNE);
   });
   html += '</tr></thead><tbody>';
 
-  rows.forEach((row) => {
+  sortedRows.forEach((row) => {
     const regionLabel = getLocalizedRegionDisplayName(row.region);
     const provinceLabel = getLocalizedProvinceDisplayName(row.province);
-    const communeLabel = getLocalizedCommuneDisplayName(row.commune);
+    const communeLabel = getLocalizedCommuneDisplayName(row.commune, row.communeProps);
     html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td><td class="comm">${escapeHtml(communeLabel)}</td>`;
     fieldOptions.forEach((fieldOption) => {
       const value = row.values[fieldOption.key];
@@ -4971,6 +4948,7 @@ function renderCommuneStatsTable(agg, categories, reseaux, selectedCategories) {
   html += '</table></div>';
 
   container.innerHTML = html;
+  attachPivotSortEventListeners(container);
 }
 
 function renderCurrentPivotView(selectedCategories) {
@@ -5009,6 +4987,107 @@ function togglePivotPanelByView(view) {
   syncAppStateToUrl();
 }
 
+function getPivotSortState(view = currentPivotView) {
+  return pivotSortStateByView[view] || { key: 'region', direction: 'asc' };
+}
+
+function setPivotSortState(view, key) {
+  const current = getPivotSortState(view);
+  const direction = current.key === key
+    ? (current.direction === 'asc' ? 'desc' : 'asc')
+    : 'asc';
+  pivotSortStateByView[view] = { key, direction };
+}
+
+function comparePivotLooseValues(left, right) {
+  const leftNum = parseNumericValue(left);
+  const rightNum = parseNumericValue(right);
+
+  if (Number.isFinite(leftNum) && Number.isFinite(rightNum)) {
+    return leftNum - rightNum;
+  }
+
+  const leftText = normalizeTextValue(left);
+  const rightText = normalizeTextValue(right);
+  const locale = isFrenchLanguage() ? 'fr' : 'ar';
+  return leftText.localeCompare(rightText, locale, { sensitivity: 'base', numeric: true });
+}
+
+function getPivotRowSortValue(row, sortKey, view) {
+  if (!row) return '';
+  if (sortKey === 'region') return getLocalizedRegionDisplayName(row.region);
+  if (sortKey === 'province') return getLocalizedProvinceDisplayName(row.province);
+  if (sortKey === 'commune') return getLocalizedCommuneDisplayName(row.commune, row.communeProps);
+  if (sortKey === 'total') return Number(row.total) || 0;
+  if (sortKey.startsWith('field:')) {
+    const fieldKey = sortKey.slice('field:'.length);
+    return row?.values?.[fieldKey] ?? '';
+  }
+
+  if (view === PIVOT_VIEW.HEALTH) return Number(row.total) || 0;
+  return '';
+}
+
+function sortPivotRows(rows, view) {
+  const safeRows = Array.isArray(rows) ? [...rows] : [];
+  const sortState = getPivotSortState(view);
+  const sortMultiplier = sortState.direction === 'desc' ? -1 : 1;
+
+  safeRows.sort((a, b) => {
+    const primary = comparePivotLooseValues(
+      getPivotRowSortValue(a, sortState.key, view),
+      getPivotRowSortValue(b, sortState.key, view)
+    );
+    if (primary !== 0) return primary * sortMultiplier;
+
+    const byRegion = compareLocalizedRegionValues(a.region, b.region);
+    if (byRegion !== 0) return byRegion;
+    const byProvince = compareLocalizedProvinceValues(a.province, b.province);
+    if (byProvince !== 0) return byProvince;
+    const byCommune = compareLocalizedCommuneValues(a.commune || '', b.commune || '');
+    if (byCommune !== 0) return byCommune;
+    return (Number(a.total) || 0) - (Number(b.total) || 0);
+  });
+
+  return safeRows;
+}
+
+function buildPivotSortableHeader(label, sortKey, view) {
+  const safeLabel = escapeHtml(label);
+  const sortState = getPivotSortState(view);
+  const isActive = sortState.key === sortKey;
+  const ariaSort = isActive
+    ? (sortState.direction === 'asc' ? 'ascending' : 'descending')
+    : 'none';
+  const arrow = !isActive ? '↕' : (sortState.direction === 'asc' ? '▲' : '▼');
+  const activeClass = isActive ? ' is-sorted' : '';
+
+  return `<th class="pivot-sortable${activeClass}" data-sort-key="${escapeHtml(sortKey)}" data-sort-view="${escapeHtml(view)}" aria-sort="${ariaSort}" role="button" tabindex="0">${safeLabel}<span class="sort-indicator" aria-hidden="true">${arrow}</span></th>`;
+}
+
+function attachPivotSortEventListeners(container) {
+  const sortableHeaders = Array.from(container.querySelectorAll('th.pivot-sortable[data-sort-key][data-sort-view]'));
+  if (!sortableHeaders.length) return;
+
+  const triggerSort = (header) => {
+    const sortKey = header.dataset.sortKey;
+    const sortView = normalizePivotView(header.dataset.sortView);
+    if (!sortKey || !sortView) return;
+    setPivotSortState(sortView, sortKey);
+    renderCurrentPivotView(getSelectedPivotCategoriesFromUi(lastPivotData?.categories || []));
+  };
+
+  sortableHeaders.forEach((header) => {
+    header.addEventListener('click', () => triggerSort(header));
+    header.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        triggerSort(header);
+      }
+    });
+  });
+}
+
 function renderPivotTable(agg, categories, reseaux, selectedCategories) {
   const container = document.getElementById('pivotContent');
   if (!container) return;
@@ -5017,61 +5096,39 @@ function renderPivotTable(agg, categories, reseaux, selectedCategories) {
     ? new Set(categories) 
     : selectedCategories;
 
-  const regionRows = new Map();
-  const provRows = new Map();
-
+  const tableRows = [];
   agg.forEach((provMap, region) => {
-    let regionCount = 0;
     provMap.forEach((commMap, prov) => {
-      let provCount = 0;
       commMap.forEach((cell, comm) => {
-        let totalForComm = selectedSet.size === categories.length 
-          ? cell.total 
+        const totalForComm = selectedSet.size === categories.length
+          ? cell.total
           : Array.from(selectedSet).reduce((sum, cat) => sum + (cell.byCategory.get(cat) || 0), 0);
-        
-        if (showZeroRows || totalForComm > 0) provCount++;
+
+        if (!showZeroRows && totalForComm === 0) return;
+        tableRows.push({ region, province: prov, commune: comm, total: totalForComm });
       });
-      provRows.set(region + '||' + prov, provCount);
-      regionCount += provCount;
     });
-    regionRows.set(region, regionCount);
   });
+
+  const sortedRows = sortPivotRows(tableRows, PIVOT_VIEW.HEALTH);
 
   let html = buildCategoryFilterHtml(categories, selectedSet);
   html += '<div class="pivot-table-wrap"><table class="pivot-table">';
-  html += '<thead><tr><th>Région</th><th>Province</th><th>Commune</th><th>Total</th></tr></thead>';
+  html += '<thead><tr>';
+  html += buildPivotSortableHeader(langText('الجهة', 'Région'), 'region', PIVOT_VIEW.HEALTH);
+  html += buildPivotSortableHeader(langText('الإقليم', 'Province'), 'province', PIVOT_VIEW.HEALTH);
+  html += buildPivotSortableHeader(langText('الجماعة', 'Commune'), 'commune', PIVOT_VIEW.HEALTH);
+  html += buildPivotSortableHeader(langText('المجموع', 'Total'), 'total', PIVOT_VIEW.HEALTH);
+  html += '</tr></thead>';
   html += '<tbody>';
 
   let grandTotal = 0;
-  Array.from(agg.keys()).sort(compareLocalizedRegionValues).forEach(region => {
-    const provMap = agg.get(region);
-    let regionFirst = true;
-
-    Array.from(provMap.keys()).sort(compareLocalizedProvinceValues).forEach(prov => {
-      const commMap = provMap.get(prov);
-      let provFirst = true;
-
-      Array.from(commMap.keys()).sort(compareLocalizedCommuneValues).forEach(comm => {
-        const cell = commMap.get(comm);
-        let totalToShow = selectedSet.size === categories.length 
-          ? cell.total 
-          : Array.from(selectedSet).reduce((sum, cat) => sum + (cell.byCategory.get(cat) || 0), 0);
-
-        if (!showZeroRows && totalToShow === 0) return;
-
-        html += '<tr>';
-        if (regionFirst) {
-          html += `<td rowspan="${regionRows.get(region)}">${escapeHtml(getLocalizedRegionDisplayName(region))}</td>`;
-          regionFirst = false;
-        }
-        if (provFirst) {
-          html += `<td rowspan="${provRows.get(region + '||' + prov)}">${escapeHtml(getLocalizedProvinceDisplayName(prov))}</td>`;
-          provFirst = false;
-        }
-        html += `<td class="comm">${escapeHtml(getLocalizedCommuneDisplayName(comm))}</td><td class="num">${totalToShow}</td></tr>`;
-        grandTotal += totalToShow;
-      });
-    });
+  sortedRows.forEach((row) => {
+    const regionLabel = getLocalizedRegionDisplayName(row.region);
+    const provinceLabel = getLocalizedProvinceDisplayName(row.province);
+    const communeLabel = getLocalizedCommuneDisplayName(row.commune);
+    html += `<tr><td>${escapeHtml(regionLabel)}</td><td>${escapeHtml(provinceLabel)}</td><td class="comm">${escapeHtml(communeLabel)}</td><td class="num">${row.total}</td></tr>`;
+    grandTotal += row.total;
   });
 
   html += '</tbody>';
@@ -5083,6 +5140,8 @@ function renderPivotTable(agg, categories, reseaux, selectedCategories) {
 }
 
 function attachPivotEventListeners(container, agg, categories, reseaux) {
+  attachPivotSortEventListeners(container);
+
   const dropdown = container.querySelector('.category-filter-dropdown');
   if (!dropdown) return;
 
