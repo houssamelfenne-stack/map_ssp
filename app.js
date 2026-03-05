@@ -22,6 +22,8 @@ const PALETTE = ['#9467bd','#8c564b','#e377c2','#7f7f7f','#bcbd22','#17becf','#a
 const SYMBOLOGY_DEFAULT_PALETTE = ['#0ea5e9', '#22c55e', '#f59e0b', '#a855f7', '#ef4444', '#14b8a6'];
 const PROVINCE_LABEL_MIN_ZOOM = 6;
 const COMMUNE_LABEL_MIN_ZOOM = 9;
+const ANALYSIS_NOTE_MIN_ZOOM = 11;
+const ANALYSIS_MEASURE_MIN_ZOOM = 11;
 const PROVINCE_LABEL_OBSTACLE_PADDING = 0;
 const PROVINCE_LABEL_LABEL_PADDING = 1;
 const PROVINCE_LABEL_RELAXED_OBSTACLE_ZOOM = 8;
@@ -57,6 +59,8 @@ const URL_STATE_PARAMS = {
   PIVOT_OPEN: 'panel',
   ZERO_ROWS: 'zeros'
 };
+const ANALYSIS_DRAW_STORAGE_KEY = 'analysis_drawings_geojson_v1';
+const ANALYSIS_DRAW_SETTINGS_STORAGE_KEY = 'analysis_draw_settings_v1';
 const RGPH2024_OFFICIAL_NATIONAL_POPULATION = 36828330;
 const RGPH2024_OFFICIAL_NATIONAL_BREAKDOWN = Object.freeze({
   moroccans: 36680178,
@@ -445,6 +449,26 @@ let routeArrowOffsetPercent = 0;
 let routeMovingArrowMarker = null;
 let routeMovingArrowTimer = null;
 let routePathProgress = 0;
+let analysisDrawLayer = null;
+let analysisDrawControl = null;
+let analysisArrowDecorators = new Map();
+let analysisLabelLayers = new Map();
+let analysisDirectedPolylineDrawer = null;
+let analysisPendingDirectedPolyline = false;
+let analysisNoteMode = false;
+let analysisDrawVisible = true;
+let analysisControlElements = null;
+let analysisDrawSettings = {
+  strokeColor: '#ef4444',
+  fillColor: '#f97316',
+  markerColor: '#2563eb',
+  textColor: '#111827',
+  textBgColor: '#ffffff',
+  lineWeight: 4,
+  showDrawings: true,
+  showPolygonAreaLabel: true,
+  showPolylineDistanceLabel: true
+};
 let excelSymbologyThemes = [];
 let activeExcelThemeId = '';
 let excelValueFieldOptionsByLevel = {
@@ -2850,7 +2874,9 @@ function applyBaseMapTheme() {
 
 /* ============ MAP INITIALIZATION ============ */
 function initMap() {
-  map = L.map('map').setView(CONFIG.MAP_CENTER, CONFIG.MAP_ZOOM);
+  map = L.map('map', {
+    markerZoomAnimation: false
+  }).setView(CONFIG.MAP_CENTER, CONFIG.MAP_ZOOM);
   applyBaseMapTheme();
 
   // Create layers once
@@ -2876,7 +2902,1082 @@ function initMap() {
     resolveProvinceLabelObstacles();
   });
 
+  initAnalysisDrawTools();
+
   // Layer control disabled: using custom legend instead
+}
+
+function isAnalysisLineLayer(layer) {
+  return !!layer && layer instanceof L.Polyline && !(layer instanceof L.Polygon);
+}
+
+function getAnalysisLineStyle() {
+  return {
+    color: analysisDrawSettings.strokeColor,
+    weight: analysisDrawSettings.lineWeight,
+    opacity: 0.95
+  };
+}
+
+function getAnalysisPolygonStyle() {
+  return {
+    color: analysisDrawSettings.strokeColor,
+    weight: analysisDrawSettings.lineWeight,
+    opacity: 0.95,
+    fillColor: analysisDrawSettings.fillColor,
+    fillOpacity: 0.28
+  };
+}
+
+function getAnalysisMarkerStyle() {
+  return {
+    radius: 8,
+    color: analysisDrawSettings.markerColor,
+    fillColor: analysisDrawSettings.markerColor,
+    fillOpacity: 0.95,
+    weight: 2
+  };
+}
+
+function getAnalysisLayerStyle(layer) {
+  const options = layer?.options || {};
+  const color = typeof options.color === 'string' && options.color ? options.color : analysisDrawSettings.strokeColor;
+  const weight = Number.isFinite(options.weight) ? options.weight : analysisDrawSettings.lineWeight;
+  const opacity = Number.isFinite(options.opacity) ? options.opacity : 0.95;
+  const fillColor = typeof options.fillColor === 'string' && options.fillColor ? options.fillColor : analysisDrawSettings.fillColor;
+  const fillOpacity = Number.isFinite(options.fillOpacity) ? options.fillOpacity : 0.28;
+  return { color, weight, opacity, fillColor, fillOpacity };
+}
+
+function applyAnalysisLayerStyle(layer, style) {
+  if (!layer || !style) return;
+  if (typeof layer.setStyle === 'function') {
+    layer.setStyle(style);
+    return;
+  }
+  if (layer instanceof L.Marker && layer.options?.icon instanceof L.DivIcon && layer._analysisIsTextNote) {
+    const text = layer._analysisText || '';
+    layer.setIcon(createAnalysisTextNoteIcon(text, style.color || analysisDrawSettings.textColor, style.fillColor || analysisDrawSettings.textBgColor));
+  }
+}
+
+function formatAnalysisDistance(meters) {
+  const value = Number(meters) || 0;
+  if (value >= 1000) {
+    const km = value / 1000;
+    return `${km.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${langText('كم', 'km')}`;
+  }
+  return `${Math.round(value).toLocaleString()} ${langText('م', 'm')}`;
+}
+
+function formatAnalysisArea(squareMeters) {
+  const value = Number(squareMeters) || 0;
+  if (value >= 1000000) {
+    const km2 = value / 1000000;
+    return `${km2.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${langText('كم²', 'km²')}`;
+  }
+  if (value >= 10000) {
+    const ha = value / 10000;
+    return `${ha.toLocaleString(undefined, { maximumFractionDigits: 2 })} ${langText('هكتار', 'ha')}`;
+  }
+  return `${Math.round(value).toLocaleString()} ${langText('م²', 'm²')}`;
+}
+
+function getAnalysisPolylineDistance(layer) {
+  if (!isAnalysisLineLayer(layer)) return 0;
+  const latlngs = layer.getLatLngs();
+  if (!Array.isArray(latlngs) || latlngs.length < 2) return 0;
+  let total = 0;
+  for (let index = 0; index < latlngs.length - 1; index += 1) {
+    total += map.distance(latlngs[index], latlngs[index + 1]);
+  }
+  return total;
+}
+
+function getAnalysisPolygonArea(layer) {
+  if (!(layer instanceof L.Polygon)) return 0;
+  const latlngGroups = layer.getLatLngs();
+  const outerRing = Array.isArray(latlngGroups?.[0]) ? latlngGroups[0] : latlngGroups;
+  if (!Array.isArray(outerRing) || outerRing.length < 3) return 0;
+  if (typeof L.GeometryUtil?.geodesicArea === 'function') {
+    return L.GeometryUtil.geodesicArea(outerRing);
+  }
+  return 0;
+}
+
+function getPolylineLabelPlacement(layer) {
+  const latlngs = layer.getLatLngs();
+  if (!Array.isArray(latlngs) || latlngs.length < 2) return { latlng: null, angle: 0 };
+  let total = 0;
+  const segments = [];
+  for (let index = 0; index < latlngs.length - 1; index += 1) {
+    const start = latlngs[index];
+    const end = latlngs[index + 1];
+    const len = map.distance(start, end);
+    segments.push({ start, end, len });
+    total += len;
+  }
+  if (total <= 0) return { latlng: latlngs[0], angle: 0 };
+
+  let target = total / 2;
+  for (const segment of segments) {
+    if (target <= segment.len) {
+      const ratio = segment.len === 0 ? 0 : (target / segment.len);
+      const lat = segment.start.lat + (segment.end.lat - segment.start.lat) * ratio;
+      const lng = segment.start.lng + (segment.end.lng - segment.start.lng) * ratio;
+      const p1 = map.latLngToLayerPoint(segment.start);
+      const p2 = map.latLngToLayerPoint(segment.end);
+      const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+      return { latlng: L.latLng(lat, lng), angle };
+    }
+    target -= segment.len;
+  }
+  return { latlng: latlngs[Math.floor(latlngs.length / 2)], angle: 0 };
+}
+
+function getPolygonBoundaryLabelPlacement(layer) {
+  const latlngGroups = layer.getLatLngs();
+  const ring = Array.isArray(latlngGroups?.[0]) ? latlngGroups[0] : latlngGroups;
+  if (!Array.isArray(ring) || ring.length < 2) {
+    return { latlng: layer.getBounds?.().getCenter?.() || null, angle: 0 };
+  }
+
+  let longest = null;
+  for (let index = 0; index < ring.length; index += 1) {
+    const start = ring[index];
+    const end = ring[(index + 1) % ring.length];
+    const len = map.distance(start, end);
+    if (!longest || len > longest.len) {
+      longest = { start, end, len };
+    }
+  }
+
+  if (!longest) {
+    return { latlng: layer.getBounds?.().getCenter?.() || null, angle: 0 };
+  }
+
+  const midLat = (longest.start.lat + longest.end.lat) / 2;
+  const midLng = (longest.start.lng + longest.end.lng) / 2;
+  const p1 = map.latLngToLayerPoint(longest.start);
+  const p2 = map.latLngToLayerPoint(longest.end);
+  const angle = Math.atan2(p2.y - p1.y, p2.x - p1.x) * (180 / Math.PI);
+  return { latlng: L.latLng(midLat, midLng), angle };
+}
+
+function clearAnalysisLabelForLayer(layer) {
+  if (!layer || !map) return;
+  const layerId = L.stamp(layer);
+  const marker = analysisLabelLayers.get(layerId);
+  if (marker && map.hasLayer(marker)) {
+    map.removeLayer(marker);
+  }
+  analysisLabelLayers.delete(layerId);
+}
+
+function createAnalysisMeasureLabelMarker(latlng, text, kind, angle = 0) {
+  const normalizedAngle = Number.isFinite(angle) ? angle : 0;
+  const html = `<span style="--analysis-label-angle:${normalizedAngle.toFixed(2)}deg">${escapeHtml(text)}</span>`;
+  return L.marker(latlng, {
+    pane: 'analysisStaticPane',
+    icon: L.divIcon({
+      className: `analysis-measure-label ${kind === 'area' ? 'analysis-area-label' : 'analysis-distance-label'}`,
+      html
+    }),
+    keyboard: false,
+    interactive: false,
+    zIndexOffset: 600
+  });
+}
+
+function getDefaultMeasureTypeForLayer(layer) {
+  if (layer instanceof L.Polygon) {
+    return analysisDrawSettings.showPolygonAreaLabel ? 'area' : '';
+  }
+  if (isAnalysisLineLayer(layer)) {
+    return analysisDrawSettings.showPolylineDistanceLabel ? 'distance' : '';
+  }
+  return '';
+}
+
+function refreshAnalysisMeasurementLabel(layer) {
+  if (!layer || !map) return;
+  clearAnalysisLabelForLayer(layer);
+
+  if (map.getZoom() < ANALYSIS_MEASURE_MIN_ZOOM) {
+    return;
+  }
+
+  const type = layer._analysisMeasureType || '';
+  if (!type) return;
+
+  if (type === 'distance' && isAnalysisLineLayer(layer)) {
+    const distance = getAnalysisPolylineDistance(layer);
+    const placement = getPolylineLabelPlacement(layer);
+    if (!placement.latlng) return;
+    const label = createAnalysisMeasureLabelMarker(placement.latlng, formatAnalysisDistance(distance), 'distance', placement.angle);
+    label.addTo(map);
+    analysisLabelLayers.set(L.stamp(layer), label);
+    return;
+  }
+
+  if (type === 'area' && layer instanceof L.Polygon) {
+    const area = getAnalysisPolygonArea(layer);
+    const placement = getPolygonBoundaryLabelPlacement(layer);
+    if (!placement.latlng) return;
+    const label = createAnalysisMeasureLabelMarker(placement.latlng, formatAnalysisArea(area), 'area', placement.angle);
+    label.addTo(map);
+    analysisLabelLayers.set(L.stamp(layer), label);
+  }
+}
+
+function refreshAllAnalysisMeasurementLabels() {
+  if (!analysisDrawVisible) return;
+  if (!analysisDrawLayer) return;
+  analysisDrawLayer.eachLayer((layer) => {
+    if (layer._analysisMeasureType) {
+      refreshAnalysisMeasurementLabel(layer);
+    }
+  });
+}
+
+function refreshAnalysisNotesVisibilityByZoom() {
+  if (!analysisDrawLayer || !map) return;
+  const shouldShowNotes = analysisDrawVisible && map.getZoom() >= ANALYSIS_NOTE_MIN_ZOOM;
+
+  analysisDrawLayer.eachLayer((layer) => {
+    if (!layer?._analysisIsTextNote) return;
+    if (typeof layer.setOpacity === 'function') {
+      layer.setOpacity(shouldShowNotes ? 1 : 0);
+    }
+  });
+}
+
+function setAnalysisDrawVisibility(visible, options = {}) {
+  const { skipPersist = false } = options;
+  if (!map || !analysisDrawLayer) return;
+
+  analysisDrawVisible = !!visible;
+
+  if (!analysisDrawVisible) {
+    analysisNoteMode = false;
+    if (analysisDirectedPolylineDrawer?.disable) {
+      try { analysisDirectedPolylineDrawer.disable(); } catch (_) {}
+    }
+
+    analysisArrowDecorators.forEach((decorator) => {
+      if (map.hasLayer(decorator)) map.removeLayer(decorator);
+    });
+    analysisLabelLayers.forEach((label) => {
+      if (map.hasLayer(label)) map.removeLayer(label);
+    });
+
+    analysisDrawLayer.eachLayer((layer) => {
+      if (layer instanceof L.Marker) {
+        if (typeof layer.setOpacity === 'function') {
+          layer.setOpacity(0);
+        }
+      } else if (typeof layer.setStyle === 'function') {
+        layer.setStyle({ opacity: 0, fillOpacity: 0 });
+      }
+    });
+  } else {
+    if (!map.hasLayer(analysisDrawLayer)) {
+      map.addLayer(analysisDrawLayer);
+    }
+
+    analysisDrawLayer.eachLayer((layer) => {
+      if (layer instanceof L.CircleMarker && !(layer instanceof L.Circle)) {
+        layer.setStyle(getAnalysisMarkerStyle());
+      } else if (isAnalysisLineLayer(layer)) {
+        layer.setStyle(getAnalysisLineStyle());
+      } else if (layer instanceof L.Polygon || layer instanceof L.Circle) {
+        layer.setStyle(getAnalysisPolygonStyle());
+      }
+
+      if (isAnalysisLineLayer(layer) && layer._analysisHasArrow) {
+        setAnalysisArrowForLayer(layer, true);
+      }
+      if (layer._analysisMeasureType) {
+        refreshAnalysisMeasurementLabel(layer);
+      }
+    });
+
+    refreshAnalysisNotesVisibilityByZoom();
+  }
+
+  analysisDrawSettings.showDrawings = analysisDrawVisible;
+  if (!skipPersist) persistAnalysisDrawSettings();
+  syncAnalysisControlsFromSettings();
+}
+
+function setAnalysisArrowForLayer(layer, enabled) {
+  if (!map || !layer) return;
+  layer._analysisHasArrow = !!enabled;
+  const layerId = L.stamp(layer);
+  const existingDecorator = analysisArrowDecorators.get(layerId);
+  if (existingDecorator && map.hasLayer(existingDecorator)) {
+    map.removeLayer(existingDecorator);
+  }
+  analysisArrowDecorators.delete(layerId);
+
+  if (!enabled || !isAnalysisLineLayer(layer)) return;
+  if (typeof L.polylineDecorator !== 'function' || typeof L.Symbol?.arrowHead !== 'function') return;
+
+  const style = getAnalysisLayerStyle(layer);
+  const decorator = L.polylineDecorator(layer, {
+    patterns: [{
+      offset: '100%',
+      repeat: 0,
+      symbol: L.Symbol.arrowHead({
+        pixelSize: 20,
+        polygon: true,
+        pathOptions: {
+          stroke: true,
+          fill: true,
+          color: style.color,
+          fillColor: style.color,
+          weight: Math.max(style.weight, 2),
+          opacity: style.opacity
+        }
+      })
+    }]
+  });
+  decorator.addTo(map);
+  analysisArrowDecorators.set(layerId, decorator);
+}
+
+function createAnalysisTextNoteIcon(text, textColor, backgroundColor) {
+  const safeText = escapeHtml(text || '');
+  const safeTextColor = textColor || analysisDrawSettings.textColor;
+  const safeBackground = backgroundColor || analysisDrawSettings.textBgColor;
+  return L.divIcon({
+    className: 'analysis-note-icon',
+    html: `<div class="analysis-note-chip" style="color:${safeTextColor};background:${safeBackground}">${safeText}</div>`
+  });
+}
+
+function createAnalysisTextNoteMarker(latlng, text, options = {}) {
+  const textColor = options.textColor || analysisDrawSettings.textColor;
+  const backgroundColor = options.backgroundColor || analysisDrawSettings.textBgColor;
+  const marker = L.marker(latlng, {
+    pane: 'analysisStaticPane',
+    icon: createAnalysisTextNoteIcon(text, textColor, backgroundColor),
+    keyboard: false
+  });
+  marker._analysisIsTextNote = true;
+  marker._analysisText = text;
+  marker._analysisTextColor = textColor;
+  marker._analysisTextBgColor = backgroundColor;
+
+  marker.on('click', () => {
+    const nextText = window.prompt(langText('تعديل الملاحظة', 'Modifier la note'), marker._analysisText || '');
+    if (nextText == null) return;
+    const trimmed = nextText.trim();
+    if (!trimmed) return;
+    marker._analysisText = trimmed;
+    marker._analysisTextColor = analysisDrawSettings.textColor;
+    marker._analysisTextBgColor = analysisDrawSettings.textBgColor;
+    marker.setIcon(createAnalysisTextNoteIcon(trimmed, marker._analysisTextColor, marker._analysisTextBgColor));
+    persistAnalysisDrawings();
+  });
+
+  return marker;
+}
+
+function createAnalysisLocationCircleMarker(latlng) {
+  return L.circleMarker(latlng, getAnalysisMarkerStyle());
+}
+
+function readAnalysisDrawSettingsFromStorage() {
+  try {
+    const raw = localStorage.getItem(ANALYSIS_DRAW_SETTINGS_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return;
+    analysisDrawSettings = Object.assign({}, analysisDrawSettings, parsed);
+  } catch (_) {
+  }
+}
+
+function persistAnalysisDrawSettings() {
+  try {
+    localStorage.setItem(ANALYSIS_DRAW_SETTINGS_STORAGE_KEY, JSON.stringify(analysisDrawSettings));
+  } catch (_) {
+  }
+}
+
+function applyAnalysisPaletteToExistingLayers() {
+  if (!analysisDrawLayer) return;
+
+  analysisDrawLayer.eachLayer((layer) => {
+    if (layer._analysisIsTextNote) {
+      layer._analysisTextColor = analysisDrawSettings.textColor;
+      layer._analysisTextBgColor = analysisDrawSettings.textBgColor;
+      layer.setIcon(createAnalysisTextNoteIcon(layer._analysisText || '', layer._analysisTextColor, layer._analysisTextBgColor));
+      return;
+    }
+
+    if (layer instanceof L.CircleMarker && !(layer instanceof L.Circle) && !isAnalysisLineLayer(layer) && !(layer instanceof L.Polygon)) {
+      layer.setStyle(getAnalysisMarkerStyle());
+      return;
+    }
+
+    if (isAnalysisLineLayer(layer)) {
+      layer.setStyle(getAnalysisLineStyle());
+      if (analysisArrowDecorators.has(L.stamp(layer))) {
+        setAnalysisArrowForLayer(layer, true);
+      }
+      refreshAnalysisMeasurementLabel(layer);
+      return;
+    }
+
+    if (layer instanceof L.Polygon || layer instanceof L.Circle) {
+      layer.setStyle(getAnalysisPolygonStyle());
+      refreshAnalysisMeasurementLabel(layer);
+    }
+  });
+
+  persistAnalysisDrawings();
+}
+
+function serializeAnalysisLayer(layer) {
+  if (!layer || typeof layer.toGeoJSON !== 'function') return null;
+
+  const style = getAnalysisLayerStyle(layer);
+  const hasArrow = isAnalysisLineLayer(layer) && analysisArrowDecorators.has(L.stamp(layer));
+  const measureType = layer._analysisMeasureType || '';
+
+  if (layer._analysisIsTextNote) {
+    const center = layer.getLatLng();
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [center.lng, center.lat]
+      },
+      properties: {
+        shape: 'text-note',
+        text: layer._analysisText || '',
+        textColor: layer._analysisTextColor || analysisDrawSettings.textColor,
+        textBgColor: layer._analysisTextBgColor || analysisDrawSettings.textBgColor,
+        _analysisStyle: {
+          color: layer._analysisTextColor || analysisDrawSettings.textColor,
+          fillColor: layer._analysisTextBgColor || analysisDrawSettings.textBgColor
+        },
+        _analysisArrow: false,
+        _analysisMeasureType: ''
+      }
+    };
+  }
+
+  if (layer instanceof L.Circle) {
+    const center = layer.getLatLng();
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [center.lng, center.lat]
+      },
+      properties: {
+        shape: 'circle',
+        radius: layer.getRadius(),
+        _analysisStyle: style,
+        _analysisArrow: false,
+        _analysisMeasureType: measureType
+      }
+    };
+  }
+
+  if (layer instanceof L.CircleMarker && !(layer instanceof L.Circle)) {
+    const center = layer.getLatLng();
+    return {
+      type: 'Feature',
+      geometry: {
+        type: 'Point',
+        coordinates: [center.lng, center.lat]
+      },
+      properties: {
+        shape: 'location-marker',
+        _analysisStyle: style,
+        _analysisArrow: false,
+        _analysisMeasureType: ''
+      }
+    };
+  }
+
+  const feature = layer.toGeoJSON();
+  feature.properties = Object.assign({}, feature.properties || {}, {
+    _analysisStyle: style,
+    _analysisArrow: hasArrow,
+    _analysisMeasureType: measureType
+  });
+  return feature;
+}
+
+function getAnalysisDrawFeatureCollection() {
+  const features = [];
+  if (!analysisDrawLayer) {
+    return { type: 'FeatureCollection', features };
+  }
+
+  analysisDrawLayer.eachLayer((layer) => {
+    const feature = serializeAnalysisLayer(layer);
+    if (feature) features.push(feature);
+  });
+
+  return { type: 'FeatureCollection', features };
+}
+
+function persistAnalysisDrawings() {
+  try {
+    const featureCollection = getAnalysisDrawFeatureCollection();
+    localStorage.setItem(ANALYSIS_DRAW_STORAGE_KEY, JSON.stringify(featureCollection));
+  } catch (_) {
+  }
+}
+
+function clearAnalysisDrawingLayers(options = {}) {
+  const { confirmBeforeClear = false } = options;
+  if (!analysisDrawLayer) return true;
+
+  if (confirmBeforeClear) {
+    const ok = window.confirm(langText('هل تريد حذف كل الرسومات التحليلية؟', 'Supprimer tous les dessins analytiques ?'));
+    if (!ok) return false;
+  }
+
+  analysisArrowDecorators.forEach((decorator) => {
+    if (map?.hasLayer(decorator)) map.removeLayer(decorator);
+  });
+  analysisArrowDecorators.clear();
+
+  analysisLabelLayers.forEach((marker) => {
+    if (map?.hasLayer(marker)) map.removeLayer(marker);
+  });
+  analysisLabelLayers.clear();
+
+  analysisDrawLayer.clearLayers();
+  persistAnalysisDrawings();
+  return true;
+}
+
+function createAnalysisLayerFromFeature(feature) {
+  if (!feature || feature.type !== 'Feature' || !feature.geometry) return null;
+
+  const properties = feature.properties || {};
+  const style = properties._analysisStyle || null;
+
+  if (feature.geometry.type === 'Point' && properties.shape === 'circle' && Number.isFinite(Number(properties.radius))) {
+    const coords = feature.geometry.coordinates || [];
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const circle = L.circle([Number(coords[1]), Number(coords[0])], {
+      radius: Number(properties.radius),
+      ...(style || getAnalysisPolygonStyle())
+    });
+    circle._analysisMeasureType = properties._analysisMeasureType || '';
+    return { layer: circle, hasArrow: false };
+  }
+
+  if (feature.geometry.type === 'Point' && properties.shape === 'text-note') {
+    const coords = feature.geometry.coordinates || [];
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const marker = createAnalysisTextNoteMarker(
+      [Number(coords[1]), Number(coords[0])],
+      properties.text || '',
+      { textColor: properties.textColor, backgroundColor: properties.textBgColor }
+    );
+    marker._analysisMeasureType = '';
+    return { layer: marker, hasArrow: false };
+  }
+
+  if (feature.geometry.type === 'Point' && properties.shape === 'location-marker') {
+    const coords = feature.geometry.coordinates || [];
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const marker = L.circleMarker([Number(coords[1]), Number(coords[0])], style || getAnalysisMarkerStyle());
+    marker._analysisMeasureType = '';
+    return { layer: marker, hasArrow: false };
+  }
+
+  let createdLayer = null;
+  const geoJsonLayer = L.geoJSON(feature, {
+    style: () => (style || {}),
+    pointToLayer: (_feature, latlng) => L.circleMarker(latlng, style || getAnalysisMarkerStyle())
+  });
+  geoJsonLayer.eachLayer((layer) => {
+    if (!createdLayer) createdLayer = layer;
+  });
+  if (!createdLayer) return null;
+
+  if (style) applyAnalysisLayerStyle(createdLayer, style);
+  createdLayer._analysisMeasureType = properties._analysisMeasureType || '';
+  return {
+    layer: createdLayer,
+    hasArrow: !!properties._analysisArrow
+  };
+}
+
+function loadAnalysisDrawingsFromFeatureCollection(featureCollection, options = {}) {
+  const { fitBounds = false } = options;
+  if (!featureCollection || featureCollection.type !== 'FeatureCollection' || !Array.isArray(featureCollection.features)) {
+    throw new Error('Invalid FeatureCollection');
+  }
+
+  clearAnalysisDrawingLayers({ confirmBeforeClear: false });
+
+  featureCollection.features.forEach((feature) => {
+    const restored = createAnalysisLayerFromFeature(feature);
+    if (!restored || !restored.layer) return;
+    analysisDrawLayer.addLayer(restored.layer);
+    if (restored.hasArrow && isAnalysisLineLayer(restored.layer)) {
+      setAnalysisArrowForLayer(restored.layer, true);
+    }
+    refreshAnalysisMeasurementLabel(restored.layer);
+  });
+
+  persistAnalysisDrawings();
+
+  if (fitBounds && analysisDrawLayer.getLayers().length > 0) {
+    const bounds = analysisDrawLayer.getBounds();
+    if (bounds?.isValid?.()) {
+      map.fitBounds(bounds.pad(0.2));
+    }
+  }
+}
+
+function loadAnalysisDrawingsFromStorage() {
+  try {
+    const raw = localStorage.getItem(ANALYSIS_DRAW_STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    loadAnalysisDrawingsFromFeatureCollection(parsed, { fitBounds: false });
+  } catch (_) {
+  }
+}
+
+function exportAnalysisDrawingsToGeoJSON() {
+  const featureCollection = getAnalysisDrawFeatureCollection();
+  const json = JSON.stringify(featureCollection, null, 2);
+  const blob = new Blob([json], { type: 'application/geo+json;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = 'analysis-drawings.geojson';
+  document.body.appendChild(anchor);
+  anchor.click();
+  document.body.removeChild(anchor);
+  URL.revokeObjectURL(url);
+  persistAnalysisDrawings();
+  showToast(langText('تم حفظ الرسومات التحليلية', 'Dessins analytiques exportés'), 'success');
+}
+
+function syncAnalysisControlsFromSettings() {
+  if (!analysisControlElements) return;
+  const {
+    container,
+    strokeColorInput,
+    fillColorInput,
+    markerColorInput,
+    textColorInput,
+    textBgColorInput,
+    lineWeightInput,
+    drawVisibilityToggle,
+    polygonAreaToggle,
+    polylineDistanceToggle,
+    noteBtn
+  } = analysisControlElements;
+
+  if (strokeColorInput) strokeColorInput.value = analysisDrawSettings.strokeColor;
+  if (fillColorInput) fillColorInput.value = analysisDrawSettings.fillColor;
+  if (markerColorInput) markerColorInput.value = analysisDrawSettings.markerColor;
+  if (textColorInput) textColorInput.value = analysisDrawSettings.textColor;
+  if (textBgColorInput) textBgColorInput.value = analysisDrawSettings.textBgColor;
+  if (lineWeightInput) lineWeightInput.value = String(analysisDrawSettings.lineWeight);
+  if (drawVisibilityToggle) drawVisibilityToggle.checked = analysisDrawVisible;
+  if (polygonAreaToggle) polygonAreaToggle.checked = !!analysisDrawSettings.showPolygonAreaLabel;
+  if (polylineDistanceToggle) polylineDistanceToggle.checked = !!analysisDrawSettings.showPolylineDistanceLabel;
+  if (noteBtn) noteBtn.classList.toggle('active', analysisNoteMode);
+  if (container) {
+    container.classList.toggle('is-hidden', !container.classList.contains('is-forced-visible') && !analysisControlElements.isVisible);
+  }
+}
+
+function setAnalysisPanelVisible(visible) {
+  if (!analysisControlElements?.container) return;
+  analysisControlElements.isVisible = !!visible;
+  const forcedVisible = analysisControlElements.container.classList.contains('is-forced-visible');
+  analysisControlElements.container.classList.toggle('is-hidden', !analysisControlElements.isVisible && !forcedVisible);
+}
+
+function setAnalysisPanelForcedVisible(forced) {
+  if (!analysisControlElements?.container) return;
+  analysisControlElements.container.classList.toggle('is-forced-visible', !!forced);
+  const effectiveVisible = analysisControlElements.isVisible || !!forced;
+  analysisControlElements.container.classList.toggle('is-hidden', !effectiveVisible);
+
+  if (analysisControlElements.panelToggleBtn) {
+    analysisControlElements.panelToggleBtn.classList.toggle('active', !!forced);
+    analysisControlElements.panelToggleBtn.setAttribute(
+      'title',
+      forced
+        ? langText('إخفاء أدوات الرسم التحليلي', 'Masquer les outils analytiques')
+        : langText('إظهار أدوات الرسم التحليلي', 'Afficher les outils analytiques')
+    );
+  }
+}
+
+function startDirectedPolylineDraw() {
+  if (!map || typeof L.Draw?.Polyline !== 'function') return;
+  analysisNoteMode = false;
+  analysisPendingDirectedPolyline = true;
+  analysisDirectedPolylineDrawer = new L.Draw.Polyline(map, {
+    shapeOptions: getAnalysisLineStyle(),
+    repeatMode: false
+  });
+  analysisDirectedPolylineDrawer.enable();
+  syncAnalysisControlsFromSettings();
+}
+
+function buildAnalysisPanelToggleControl() {
+  const control = L.control({ position: 'topleft' });
+
+  control.onAdd = function onAdd() {
+    const container = L.DomUtil.create('div', 'leaflet-bar analysis-panel-toggle-wrap');
+    const button = L.DomUtil.create('button', 'analysis-panel-toggle-btn', container);
+    button.type = 'button';
+    button.innerHTML = '🧰';
+    button.setAttribute('title', langText('إظهار أدوات الرسم التحليلي', 'Afficher les outils analytiques'));
+
+    button.addEventListener('click', () => {
+      const forcedVisible = !!analysisControlElements?.container?.classList?.contains('is-forced-visible');
+      setAnalysisPanelForcedVisible(!forcedVisible);
+    });
+
+    if (analysisControlElements) {
+      analysisControlElements.panelToggleBtn = button;
+    }
+
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+    return container;
+  };
+
+  return control;
+}
+
+function handleAnalysisMapClickForNotes(event) {
+  if (!analysisNoteMode) return;
+  map?.closePopup?.();
+  const input = window.prompt(langText('أدخل ملاحظة للخريطة', 'Ajouter une note sur la carte'));
+  if (input == null) return;
+  const text = input.trim();
+  if (!text) {
+    showToast(langText('الرجاء إدخال نص للملاحظة', 'Veuillez saisir un texte pour la note'), 'info');
+    return;
+  }
+
+  const marker = createAnalysisTextNoteMarker(event.latlng, text);
+  analysisDrawLayer.addLayer(marker);
+  refreshAnalysisNotesVisibilityByZoom();
+  persistAnalysisDrawings();
+}
+
+function buildAnalysisDrawActionControl() {
+  const control = L.control({ position: 'topright' });
+
+  control.onAdd = function onAdd() {
+    const container = L.DomUtil.create('div', 'analysis-draw-panel is-hidden');
+    container.innerHTML = ''
+      + '<div class="analysis-draw-header">'
+      + `  <strong>${escapeHtml(langText('أدوات الرسم التحليلي', 'Outils analytiques'))}</strong>`
+      + '</div>'
+      + '<div class="analysis-draw-actions">'
+      + `  <button type="button" class="analysis-draw-btn" data-action="directed" title="${escapeHtml(langText('Polyline بسهم للتشوير', 'Polyline fléchée'))}">↝</button>`
+      + `  <button type="button" class="analysis-draw-btn" data-action="note" title="${escapeHtml(langText('إضافة ملاحظة نصية', 'Ajouter une note'))}">📝</button>`
+      + `  <button type="button" class="analysis-draw-btn" data-action="apply" title="${escapeHtml(langText('تطبيق الألوان الحالية على الرسومات', 'Appliquer les couleurs aux dessins'))}">🎨</button>`
+      + `  <button type="button" class="analysis-draw-btn" data-action="save" title="${escapeHtml(langText('حفظ GeoJSON', 'Exporter GeoJSON'))}">💾</button>`
+      + `  <button type="button" class="analysis-draw-btn" data-action="load" title="${escapeHtml(langText('تحميل GeoJSON', 'Importer GeoJSON'))}">📂</button>`
+      + `  <button type="button" class="analysis-draw-btn" data-action="clear" title="${escapeHtml(langText('مسح الرسومات', 'Supprimer les dessins'))}">🗑</button>`
+      + '</div>'
+      + '<div class="analysis-draw-color-grid">'
+      + `  <label><span>${escapeHtml(langText('خط', 'Trait'))}</span><input type="color" data-color="stroke"></label>`
+      + `  <label><span>${escapeHtml(langText('ملء', 'Remplissage'))}</span><input type="color" data-color="fill"></label>`
+      + `  <label><span>${escapeHtml(langText('مؤشر', 'Marqueur'))}</span><input type="color" data-color="marker"></label>`
+      + `  <label><span>${escapeHtml(langText('نص', 'Texte'))}</span><input type="color" data-color="text"></label>`
+      + `  <label><span>${escapeHtml(langText('خلفية نص', 'Fond texte'))}</span><input type="color" data-color="text-bg"></label>`
+      + `  <label><span>${escapeHtml(langText('سماكة', 'Épaisseur'))}</span><input type="range" min="2" max="10" step="1" data-color="weight"></label>`
+      + '</div>'
+      + '<div class="analysis-draw-toggles">'
+      + `  <label><input type="checkbox" data-toggle="draw-visibility"> ${escapeHtml(langText('إظهار/إخفاء الرسومات', 'Afficher/Masquer les dessins'))}</label>`
+      + `  <label><input type="checkbox" data-toggle="polygon-area"> ${escapeHtml(langText('إظهار مساحة Polygon على الحد', 'Afficher la surface du polygon sur le bord'))}</label>`
+      + `  <label><input type="checkbox" data-toggle="polyline-distance"> ${escapeHtml(langText('إظهار مسافة Polyline بجانبه', 'Afficher la distance du polyline à côté'))}</label>`
+      + '</div>';
+
+    const fileInput = L.DomUtil.create('input', 'analysis-draw-file-input', container);
+    fileInput.type = 'file';
+    fileInput.accept = '.geojson,.json,application/json,application/geo+json';
+
+    const directedBtn = container.querySelector('[data-action="directed"]');
+    const noteBtn = container.querySelector('[data-action="note"]');
+    const applyBtn = container.querySelector('[data-action="apply"]');
+    const saveBtn = container.querySelector('[data-action="save"]');
+    const loadBtn = container.querySelector('[data-action="load"]');
+    const clearBtn = container.querySelector('[data-action="clear"]');
+    const strokeColorInput = container.querySelector('[data-color="stroke"]');
+    const fillColorInput = container.querySelector('[data-color="fill"]');
+    const markerColorInput = container.querySelector('[data-color="marker"]');
+    const textColorInput = container.querySelector('[data-color="text"]');
+    const textBgColorInput = container.querySelector('[data-color="text-bg"]');
+    const lineWeightInput = container.querySelector('[data-color="weight"]');
+    const drawVisibilityToggle = container.querySelector('[data-toggle="draw-visibility"]');
+    const polygonAreaToggle = container.querySelector('[data-toggle="polygon-area"]');
+    const polylineDistanceToggle = container.querySelector('[data-toggle="polyline-distance"]');
+
+    analysisControlElements = {
+      container,
+      isVisible: false,
+      panelToggleBtn: null,
+      noteBtn,
+      strokeColorInput,
+      fillColorInput,
+      markerColorInput,
+      textColorInput,
+      textBgColorInput,
+      lineWeightInput,
+      drawVisibilityToggle,
+      polygonAreaToggle,
+      polylineDistanceToggle
+    };
+
+    syncAnalysisControlsFromSettings();
+
+    directedBtn?.addEventListener('click', () => {
+      startDirectedPolylineDraw();
+      showToast(langText('ابدأ رسم خط سهم للتشوير بين جماعتين', 'Commencez à dessiner une polyline fléchée'), 'info');
+    });
+
+    noteBtn?.addEventListener('click', () => {
+      analysisNoteMode = !analysisNoteMode;
+      syncAnalysisControlsFromSettings();
+      showToast(
+        analysisNoteMode
+          ? langText('وضع الملاحظة مفعل: انقر على الخريطة لإضافة تعليق', 'Mode note actif : cliquez sur la carte pour ajouter un commentaire')
+          : langText('تم تعطيل وضع الملاحظة', 'Mode note désactivé'),
+        'info'
+      );
+    });
+
+    applyBtn?.addEventListener('click', () => {
+      applyAnalysisPaletteToExistingLayers();
+      showToast(langText('تم تحديث ألوان الرسومات', 'Couleurs des dessins mises à jour'), 'success');
+    });
+
+    saveBtn?.addEventListener('click', () => {
+      exportAnalysisDrawingsToGeoJSON();
+    });
+
+    loadBtn?.addEventListener('click', () => {
+      fileInput.value = '';
+      fileInput.click();
+    });
+
+    clearBtn?.addEventListener('click', () => {
+      const cleared = clearAnalysisDrawingLayers({ confirmBeforeClear: true });
+      if (cleared) showToast(langText('تم مسح الرسومات التحليلية', 'Dessins analytiques supprimés'), 'success');
+    });
+
+    const bindColorInput = (input, applyValue) => {
+      input?.addEventListener('input', () => {
+        applyValue(input.value);
+        persistAnalysisDrawSettings();
+      });
+    };
+
+    bindColorInput(strokeColorInput, (value) => { analysisDrawSettings.strokeColor = value; });
+    bindColorInput(fillColorInput, (value) => { analysisDrawSettings.fillColor = value; });
+    bindColorInput(markerColorInput, (value) => { analysisDrawSettings.markerColor = value; });
+    bindColorInput(textColorInput, (value) => { analysisDrawSettings.textColor = value; });
+    bindColorInput(textBgColorInput, (value) => { analysisDrawSettings.textBgColor = value; });
+
+    lineWeightInput?.addEventListener('input', () => {
+      const numeric = Number(lineWeightInput.value);
+      analysisDrawSettings.lineWeight = Number.isFinite(numeric) ? Math.min(10, Math.max(2, numeric)) : 4;
+      persistAnalysisDrawSettings();
+    });
+
+    drawVisibilityToggle?.addEventListener('change', () => {
+      setAnalysisDrawVisibility(!!drawVisibilityToggle.checked);
+    });
+
+    polygonAreaToggle?.addEventListener('change', () => {
+      analysisDrawSettings.showPolygonAreaLabel = !!polygonAreaToggle.checked;
+      if (!analysisDrawSettings.showPolygonAreaLabel) {
+        analysisDrawLayer?.eachLayer((layer) => {
+          if (layer instanceof L.Polygon) {
+            layer._analysisMeasureType = '';
+            clearAnalysisLabelForLayer(layer);
+          }
+        });
+      } else {
+        analysisDrawLayer?.eachLayer((layer) => {
+          if (layer instanceof L.Polygon) {
+            layer._analysisMeasureType = 'area';
+          }
+        });
+        refreshAllAnalysisMeasurementLabels();
+      }
+      persistAnalysisDrawSettings();
+      persistAnalysisDrawings();
+    });
+
+    polylineDistanceToggle?.addEventListener('change', () => {
+      analysisDrawSettings.showPolylineDistanceLabel = !!polylineDistanceToggle.checked;
+      if (!analysisDrawSettings.showPolylineDistanceLabel) {
+        analysisDrawLayer?.eachLayer((layer) => {
+          if (isAnalysisLineLayer(layer)) {
+            layer._analysisMeasureType = '';
+            clearAnalysisLabelForLayer(layer);
+          }
+        });
+      } else {
+        analysisDrawLayer?.eachLayer((layer) => {
+          if (isAnalysisLineLayer(layer)) {
+            layer._analysisMeasureType = 'distance';
+          }
+        });
+        refreshAllAnalysisMeasurementLabels();
+      }
+      persistAnalysisDrawSettings();
+      persistAnalysisDrawings();
+    });
+
+    fileInput.addEventListener('change', async (event) => {
+      const file = event.target?.files?.[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        loadAnalysisDrawingsFromFeatureCollection(parsed, { fitBounds: true });
+        showToast(langText('تم تحميل الرسومات التحليلية', 'Dessins analytiques chargés'), 'success');
+      } catch (_) {
+        showToast(langText('تعذر قراءة ملف الرسومات', 'Impossible de lire le fichier de dessins'), 'error');
+      }
+    });
+
+    L.DomEvent.disableClickPropagation(container);
+    L.DomEvent.disableScrollPropagation(container);
+    return container;
+  };
+
+  return control;
+}
+
+function initAnalysisDrawTools() {
+  if (!map || typeof L === 'undefined' || typeof L.Control?.Draw === 'undefined') {
+    return;
+  }
+
+  if (!map.getPane('analysisStaticPane')) {
+    const staticPane = map.createPane('analysisStaticPane');
+    staticPane.classList.add('leaflet-zoom-hide');
+    staticPane.style.zIndex = '680';
+    staticPane.style.pointerEvents = 'auto';
+  }
+
+  readAnalysisDrawSettingsFromStorage();
+
+  analysisDrawLayer = new L.FeatureGroup();
+  map.addLayer(analysisDrawLayer);
+
+  analysisDrawControl = new L.Control.Draw({
+    position: 'topleft',
+    edit: {
+      featureGroup: analysisDrawLayer
+    },
+    draw: {
+      polygon: {
+        shapeOptions: getAnalysisPolygonStyle()
+      },
+      polyline: {
+        shapeOptions: getAnalysisLineStyle()
+      },
+      rectangle: {
+        shapeOptions: getAnalysisPolygonStyle()
+      },
+      circle: {
+        shapeOptions: getAnalysisPolygonStyle()
+      },
+      marker: true,
+      circlemarker: false
+    }
+  });
+
+  map.addControl(analysisDrawControl);
+  buildAnalysisPanelToggleControl().addTo(map);
+  buildAnalysisDrawActionControl().addTo(map);
+  analysisDrawVisible = analysisDrawSettings.showDrawings !== false;
+  setAnalysisDrawVisibility(analysisDrawVisible, { skipPersist: true });
+
+  map.on('click', handleAnalysisMapClickForNotes);
+
+  map.on('zoomend', refreshAllAnalysisMeasurementLabels);
+  map.on('zoomend', refreshAnalysisNotesVisibilityByZoom);
+  map.on('moveend', refreshAllAnalysisMeasurementLabels);
+  map.on('draw:editstart', () => {
+    setAnalysisDrawVisibility(true);
+    setAnalysisPanelVisible(true);
+  });
+  map.on('draw:editstop', () => setAnalysisPanelVisible(false));
+  map.on('draw:deletestart', () => setAnalysisPanelVisible(true));
+  map.on('draw:deletestop', () => setAnalysisPanelVisible(false));
+
+  map.on('draw:created', (event) => {
+    let layer = event.layer;
+
+    if (event.layerType === 'marker' && !layer._analysisIsTextNote) {
+      layer = createAnalysisLocationCircleMarker(layer.getLatLng());
+    } else if (isAnalysisLineLayer(layer)) {
+      layer.setStyle(getAnalysisLineStyle());
+    } else if (layer instanceof L.Polygon || layer instanceof L.Circle) {
+      layer.setStyle(getAnalysisPolygonStyle());
+    }
+
+    layer._analysisMeasureType = getDefaultMeasureTypeForLayer(layer);
+    analysisDrawLayer.addLayer(layer);
+
+    if (analysisPendingDirectedPolyline && isAnalysisLineLayer(layer)) {
+      setAnalysisArrowForLayer(layer, true);
+    }
+    if (analysisPendingDirectedPolyline) analysisPendingDirectedPolyline = false;
+
+    refreshAnalysisMeasurementLabel(layer);
+    refreshAnalysisNotesVisibilityByZoom();
+    persistAnalysisDrawings();
+  });
+
+  map.on('draw:edited', (event) => {
+    event.layers.eachLayer((layer) => {
+      if (isAnalysisLineLayer(layer) && analysisArrowDecorators.has(L.stamp(layer))) {
+        setAnalysisArrowForLayer(layer, true);
+      }
+      refreshAnalysisMeasurementLabel(layer);
+    });
+    persistAnalysisDrawings();
+  });
+
+  map.on('draw:deleted', (event) => {
+    event.layers.eachLayer((layer) => {
+      const layerId = L.stamp(layer);
+      const decorator = analysisArrowDecorators.get(layerId);
+      if (decorator && map.hasLayer(decorator)) {
+        map.removeLayer(decorator);
+      }
+      analysisArrowDecorators.delete(layerId);
+      clearAnalysisLabelForLayer(layer);
+    });
+    persistAnalysisDrawings();
+  });
+
+  loadAnalysisDrawingsFromStorage();
+  refreshAnalysisNotesVisibilityByZoom();
 }
 
 function parseProvinceLabel(label) {
@@ -3053,11 +4154,22 @@ function bindSmartAreaPopup(layer, popupHtml) {
   });
 
   layer.on('click', (event) => {
+    if (analysisNoteMode) {
+      layer.closePopup();
+      return;
+    }
+
     const sourceLatLng = event?.latlng
       || layer.getBounds?.()?.getCenter?.()
       || map?.getCenter?.();
     const targetLatLng = getSmartPopupLatLng(sourceLatLng);
     layer.openPopup(targetLatLng);
+  });
+
+  layer.on('popupopen', () => {
+    if (analysisNoteMode) {
+      layer.closePopup();
+    }
   });
 }
 
