@@ -40,6 +40,22 @@ body.landing-open {
   overflow: hidden;
 }
 
+.app-footer {
+  position: fixed;
+  left: 10px;
+  bottom: 6px;
+  z-index: 740;
+  text-align: center;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  pointer-events: none;
+}
+
 /* ============ Scrollbar ============ */
 ::-webkit-scrollbar { width: 8px; height: 8px; }
 ::-webkit-scrollbar-track { background: transparent; }
@@ -2164,6 +2180,7 @@ body.lang-ar .pivot-table-commune {
 /* ============ Dark Theme ============ */
 body,
 .app-header,
+.app-footer,
 .header-btn,
 .stat-item,
 .search-container,
@@ -2397,6 +2414,13 @@ body[data-theme="dark"] .area-label-commune {
   text-shadow: 0 1px 1px rgba(15, 23, 42, 0.9);
 }
 
+body[data-theme="dark"] .app-footer {
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.9);
+  border-color: #334155;
+  box-shadow: 0 2px 8px rgba(2, 6, 23, 0.45);
+}
+
 body[data-theme="dark"] .leaflet-container {
   background: #111827;
 }
@@ -2494,5 +2518,12 @@ body[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
   .loading-logo-fallback {
     width: 40px;
     height: 40px;
+  }
+
+  .app-footer {
+    font-size: 10px;
+    left: 8px;
+    bottom: 5px;
+    padding: 3px 7px;
   }
 }
